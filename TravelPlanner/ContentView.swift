@@ -2,20 +2,23 @@
 //  ContentView.swift
 //  TravelPlanner
 //
-//  Created by Juraj Vépy on 14/12/2025.
+//  Main content view - handles navigation between Welcome and Home
 //
 
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var authViewModel = AuthViewModel()
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if authViewModel.isAuthenticated {
+                HomeView(viewModel: authViewModel)
+            } else {
+                WelcomeView()
+                    .environmentObject(authViewModel)
+            }
         }
-        .padding()
     }
 }
 

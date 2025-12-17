@@ -1,0 +1,23 @@
+//
+//  User.swift
+//  TravelPlanner
+//
+//  User model
+//
+
+import Foundation
+
+struct User: Codable, Identifiable {
+    let id: String
+    let email: String
+    let name: String
+    let createdAt: Date
+    
+    init(id: String = UUID().uuidString, email: String, name: String, createdAt: Date = Date()) {
+        self.id = id
+        self.email = email
+        self.name = name
+        self.createdAt = createdAt
+    }
+}
+
