@@ -12,8 +12,9 @@ import Combine
 class AuthViewModel: ObservableObject {
     @Published var isAuthenticated = false
     @Published var currentUser: User?
-    @Published var isLoading = false
+    @Published var isLoading = true // Start as true for initial load
     @Published var errorMessage: String?
+    @Published var shouldShowOnboarding = false
     
     private let authService = AuthenticationService.shared
     
@@ -21,51 +22,83 @@ class AuthViewModel: ObservableObject {
         checkAuthStatus()
     }
     
-    // Check if user is already logged in
     func checkAuthStatus() {
-        isAuthenticated = authService.isLoggedIn()
-        if isAuthenticated {
-            currentUser = authService.getUser()
+        isLoading = true
+        
+        if authService.isLoggedIn() {
+            Task {
+                do {
+                    currentUser = try await authService.getUser()
+                    isAuthenticated = true
+                    shouldShowOnboarding = !authService.hasSeenOnboarding()
+                } catch {
+                    currentUser = nil
+                    isAuthenticated = false
+                    try? authService.logout()
+                }
+                isLoading = false
+            }
+        } else {
+            currentUser = nil
+            isAuthenticated = false
+            isLoading = false
         }
     }
     
-    // Login
-    func login(email: String, password: String) async {
+    func loginWithApple() async {
         isLoading = true
         errorMessage = nil
         
         do {
-            let user = try await authService.login(email: email, password: password)
+            let credential = try await AppleSignInManager.shared.signIn()
+            let user = try await authService.loginWithApple(credential: credential)
             currentUser = user
+            shouldShowOnboarding = !authService.hasSeenOnboarding()
             isAuthenticated = true
         } catch {
-            errorMessage = "Login failed. Please try again."
+            errorMessage = "Apple Sign In failed. Please try again."
+            print("Apple Sign In Error: \(error.localizedDescription)")
         }
         
         isLoading = false
     }
     
-    // Register
-    func register(email: String, password: String, name: String) async {
+    func loginWithGoogle() async {
         isLoading = true
         errorMessage = nil
         
         do {
-            let user = try await authService.register(email: email, password: password, name: name)
+            let credential = try await GoogleSignInManager.shared.signIn()
+            let user = try await authService.loginWithGoogle(credential: credential)
             currentUser = user
+            
+            // Check AFTER login if they've seen onboarding
+            shouldShowOnboarding = !authService.hasSeenOnboarding()
+            
+            // Set authenticated LAST so UI shows onboarding immediately
             isAuthenticated = true
         } catch {
-            errorMessage = "Registration failed. Please try again."
+            errorMessage = "Google Sign In failed. Please try again."
+            print("Google Sign In Error: \(error.localizedDescription)")
         }
         
         isLoading = false
     }
     
-    // Logout
     func logout() {
-        authService.logout()
-        currentUser = nil
-        isAuthenticated = false
+        do {
+            try authService.logout()
+            currentUser = nil
+            isAuthenticated = false
+            shouldShowOnboarding = false
+        } catch {
+            errorMessage = "Logout failed. Please try again."
+        }
+    }
+    
+    func finishOnboarding() {
+        authService.setOnboardingSeen()
+        shouldShowOnboarding = false
     }
 }
 

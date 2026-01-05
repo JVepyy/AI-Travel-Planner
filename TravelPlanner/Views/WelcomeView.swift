@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct WelcomeView: View {
-    @StateObject private var viewModel = AuthViewModel()
+    @EnvironmentObject var viewModel: AuthViewModel
     @State private var isLoading = false
     
     var body: some View {
@@ -30,14 +30,14 @@ struct WelcomeView: View {
                     .foregroundColor(.white)
                     .padding(.top, 24)
                 
-                VStack(spacing: 8) {
-                    Text("Start planning your dream trip for free.")
-                        .font(.satoshi(size: 17, weight: .medium))
+                VStack(spacing: 6) {
+                    Text("Your next adventure starts here.")
+                        .font(.satoshi(size: 18, weight: .semibold))
                         .foregroundColor(.white.opacity(0.95))
                     
-                    Text("Join the community of smart travelers.")
-                        .font(.satoshi(size: 17, weight: .medium))
-                        .foregroundColor(.white.opacity(0.95))
+                    Text("Plan trips in seconds with AI.")
+                        .font(.satoshi(size: 16, weight: .medium))
+                        .foregroundColor(.white.opacity(0.85))
                 }
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
@@ -50,19 +50,20 @@ struct WelcomeView: View {
                         Button(action: {
                             handleAppleSignIn()
                         }) {
-                            HStack(spacing: 10) {
+                            HStack(spacing: 12) {
                                 Image(systemName: "apple.logo")
-                                    .font(.system(size: 18, weight: .semibold))
+                                    .font(.system(size: 20, weight: .bold))
                                 Text("Continue with Apple")
-                                    .font(.satoshi(size: 16, weight: .bold))
+                                    .font(.satoshi(size: 17, weight: .bold))
+                                    .tracking(0.3)
                             }
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 52)
+                            .frame(height: 54)
                             .background(Color(white: 0.15))
-                            .cornerRadius(26)
+                            .cornerRadius(27)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 26)
+                                RoundedRectangle(cornerRadius: 27)
                                     .stroke(Color.white.opacity(0.2), lineWidth: 1.5)
                             )
                             .shadow(color: Color.white.opacity(0.1), radius: 4, x: 0, y: 2)
@@ -72,19 +73,20 @@ struct WelcomeView: View {
                         Button(action: {
                             handleGoogleSignIn()
                         }) {
-                            HStack(spacing: 10) {
+                            HStack(spacing: 12) {
                                 Image("google-logo")
                                     .resizable()
                                     .aspectRatio(contentMode: .fit)
                                     .frame(width: 20, height: 20)
                                 Text("Continue with Google")
-                                    .font(.satoshi(size: 16, weight: .bold))
+                                    .font(.satoshi(size: 17, weight: .bold))
                                     .foregroundColor(.black)
+                                    .tracking(0.3)
                             }
                             .frame(maxWidth: .infinity)
-                            .frame(height: 52)
+                            .frame(height: 54)
                             .background(Color.white)
-                            .cornerRadius(26)
+                            .cornerRadius(27)
                         }
                         .disabled(isLoading)
                     }
@@ -112,13 +114,13 @@ struct WelcomeView: View {
             }
             .edgesIgnoringSafeArea(.bottom)
         }
+        .navigationBarHidden(true)
     }
     
     private func handleAppleSignIn() {
         isLoading = true
         Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            await viewModel.login(email: "apple@user.com", password: "dummy")
+            await viewModel.loginWithApple()
             isLoading = false
         }
     }
@@ -126,8 +128,7 @@ struct WelcomeView: View {
     private func handleGoogleSignIn() {
         isLoading = true
         Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            await viewModel.login(email: "google@user.com", password: "dummy")
+            await viewModel.loginWithGoogle()
             isLoading = false
         }
     }
@@ -155,4 +156,5 @@ struct RoundedCorner: Shape {
 
 #Preview {
     WelcomeView()
+        .environmentObject(AuthViewModel())
 }

@@ -1,83 +1,90 @@
-//
-//  AuthenticationService.swift
-//  TravelPlanner
-//
-//  Handles user authentication
-//
-
 import Foundation
+import FirebaseAuth
+import FirebaseFirestore
 
 class AuthenticationService {
     static let shared = AuthenticationService()
     
-    private let userDefaultsKey = "authToken"
-    private let userDataKey = "userData"
+    private let hasSeenOnboardingKey = "hasSeenOnboarding"
+    private let db = Firestore.firestore()
     
     private init() {}
     
-    // Save authentication token
-    func saveToken(_ token: String) {
-        UserDefaults.standard.set(token, forKey: userDefaultsKey)
+    var currentUser: FirebaseAuth.User? {
+        return Auth.auth().currentUser
     }
     
-    // Get authentication token
-    func getToken() -> String? {
-        return UserDefaults.standard.string(forKey: userDefaultsKey)
-    }
-    
-    // Check if user is logged in
     func isLoggedIn() -> Bool {
-        return getToken() != nil
+        return Auth.auth().currentUser != nil
     }
     
-    // Save user data
-    func saveUser(_ user: User) {
-        if let encoded = try? JSONEncoder().encode(user) {
-            UserDefaults.standard.set(encoded, forKey: userDataKey)
-        }
+    func saveUser(_ user: User) async throws {
+        try await db.collection("users").document(user.id).setData([
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "createdAt": user.createdAt
+        ])
     }
     
-    // Get user data
-    func getUser() -> User? {
-        guard let data = UserDefaults.standard.data(forKey: userDataKey) else {
+    func getUser() async throws -> User? {
+        guard let currentUser = Auth.auth().currentUser else {
             return nil
         }
-        return try? JSONDecoder().decode(User.self, from: data)
+        
+        let doc = try await db.collection("users").document(currentUser.uid).getDocument()
+        
+        guard let data = doc.data() else {
+            return nil
+        }
+        
+        return User(
+            id: data["id"] as? String ?? currentUser.uid,
+            email: data["email"] as? String ?? currentUser.email ?? "",
+            name: data["name"] as? String ?? "Traveler",
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+        )
     }
     
-    // Logout
-    func logout() {
-        UserDefaults.standard.removeObject(forKey: userDefaultsKey)
-        UserDefaults.standard.removeObject(forKey: userDataKey)
+    func hasSeenOnboarding() -> Bool {
+        return UserDefaults.standard.bool(forKey: hasSeenOnboardingKey)
     }
     
-    // MARK: - Temporary login (will be replaced with real API)
-    func login(email: String, password: String) async throws -> User {
-        // Simulate API call
-        try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+    func setOnboardingSeen() {
+        UserDefaults.standard.set(true, forKey: hasSeenOnboardingKey)
+    }
+    
+    func logout() throws {
+        try Auth.auth().signOut()
+        UserDefaults.standard.removeObject(forKey: hasSeenOnboardingKey)
+        GoogleSignInManager.shared.signOut()
+    }
+    
+    func loginWithApple(credential: AuthCredential) async throws -> User {
+        let result = try await Auth.auth().signIn(with: credential)
         
-        // For now, create a mock user
-        let user = User(email: email, name: email.components(separatedBy: "@").first ?? "User")
-        let token = UUID().uuidString
+        let user = User(
+            id: result.user.uid,
+            email: result.user.email ?? "user@apple.com",
+            name: result.user.displayName ?? "Traveler"
+        )
         
-        saveToken(token)
-        saveUser(user)
+        try await saveUser(user)
         
         return user
     }
     
-    // MARK: - Temporary register (will be replaced with real API)
-    func register(email: String, password: String, name: String) async throws -> User {
-        // Simulate API call
-        try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+    func loginWithGoogle(credential: AuthCredential) async throws -> User {
+        let result = try await Auth.auth().signIn(with: credential)
         
-        let user = User(email: email, name: name)
-        let token = UUID().uuidString
+        let user = User(
+            id: result.user.uid,
+            email: result.user.email ?? "user@gmail.com",
+            name: result.user.displayName?.split(separator: " ").first.map(String.init) ?? "Traveler"
+        )
         
-        saveToken(token)
-        saveUser(user)
+        try await saveUser(user)
         
         return user
     }
 }
-
