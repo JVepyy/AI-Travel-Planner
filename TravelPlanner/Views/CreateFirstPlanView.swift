@@ -42,8 +42,10 @@ struct CreateFirstPlanView: View {
                         .tag(3)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .animation(.easeInOut(duration: 0.3), value: currentStage)
                 .onChange(of: currentStage) { _ in
                     isTextFieldFocused = false
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 }
                 
                 Spacer()
@@ -85,6 +87,7 @@ struct CreateFirstPlanView: View {
                         .padding(.horizontal, 32)
                     } else {
                         Button(action: {
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                             generatePlan()
                         }) {
                             Text("Generate My Plan")
@@ -192,12 +195,12 @@ struct Stage1DestinationView: View {
                 .background(
                     RoundedRectangle(cornerRadius: 16)
                         .fill(Color.white.opacity(0.15))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                        )
+                        .strokeBorder(Color.white.opacity(0.3), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isTextFieldFocused.wrappedValue = true
+                }
             }
             .padding(.horizontal, 32)
             
@@ -609,27 +612,28 @@ struct Stage4SpecialRequestsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 32)
             
-            TextEditor(text: $specialRequests)
-                .font(.satoshi(size: 16, weight: .regular))
-                .foregroundColor(.white)
-                .scrollContentBackground(.hidden)
-                .background(Color.white.opacity(0.1))
-                .cornerRadius(16)
-                .frame(height: 150)
-                .padding(.horizontal, 32)
-                .overlay(
-                    Group {
-                        if specialRequests.isEmpty {
-                            Text("E.g., \"Traveling with 4 friends, we love local food and hiking\"")
-                                .font(.satoshi(size: 14, weight: .regular))
-                                .foregroundColor(.white.opacity(0.5))
-                                .padding(.horizontal, 40)
-                                .padding(.top, 8)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    , alignment: .topLeading
-                )
+            ZStack(alignment: .topLeading) {
+                if specialRequests.isEmpty {
+                    Text("E.g., \"Traveling with 4 friends, we love local food and hiking\"")
+                        .font(.satoshi(size: 14, weight: .regular))
+                        .foregroundColor(.white.opacity(0.5))
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                        .allowsHitTesting(false)
+                }
+                
+                TextField("", text: $specialRequests, axis: .vertical)
+                    .font(.satoshi(size: 16, weight: .regular))
+                    .foregroundColor(.white)
+                    .accentColor(.white)
+                    .textFieldStyle(.plain)
+                    .padding(16)
+                    .frame(minHeight: 120, alignment: .topLeading)
+                    .lineLimit(5...10)
+            }
+            .background(Color.white.opacity(0.1))
+            .cornerRadius(16)
+            .padding(.horizontal, 32)
             
             Spacer()
         }

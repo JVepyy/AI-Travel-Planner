@@ -67,3 +67,23 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# iOS / Xcode
+*.xcuserstate
+*.xcuserdatad
+build/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+
+# Firebase sensitive files - NEVER COMMIT THESE
+GoogleService-Info.plist
+TravelPlanner/GoogleService-Info.plist
+**/GoogleService-Info.plist
