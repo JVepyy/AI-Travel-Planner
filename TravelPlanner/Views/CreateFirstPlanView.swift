@@ -2,6 +2,10 @@ import SwiftUI
 
 struct CreateFirstPlanView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
+    @Binding var hasCreatedFirstPlan: Bool
+    var onDismiss: (() -> Void)? = nil // Optional close action
+    var onPlanCreated: ((TravelPlan) -> Void)? = nil // Callback when plan is created
+    
     @State private var currentStage = 0
     @State private var destination = ""
     @State private var startDate = Date()
@@ -9,117 +13,182 @@ struct CreateFirstPlanView: View {
     @State private var budget: BudgetLevel = .moderate
     @State private var specialRequests = ""
     @FocusState private var isTextFieldFocused: Bool
+    @State private var hasFlexibleDates = false
+    @State private var tripDuration: Int = 7
     
     var body: some View {
-        ZStack {
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.3, green: 0.5, blue: 1.0),
-                    Color(red: 0.6, green: 0.3, blue: 0.9),
-                    Color(red: 0.9, green: 0.4, blue: 0.6)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-            
-            VStack(spacing: 0) {
-                ProgressBar(currentStage: currentStage, totalStages: 4)
-                    .padding(.top, 60)
-                    .padding(.horizontal, 32)
-                
-                TabView(selection: $currentStage) {
-                    Stage1DestinationView(destination: $destination, isTextFieldFocused: $isTextFieldFocused)
-                        .tag(0)
+        Group {
+            if isGenerating {
+                PlanGenerationLoadingView()
+            } else {
+                ZStack {
+                    LinearGradient(
+                        gradient: Gradient(colors: [
+                            Color(red: 0.3, green: 0.5, blue: 1.0),
+                            Color(red: 0.6, green: 0.3, blue: 0.9),
+                            Color(red: 0.9, green: 0.4, blue: 0.6)
+                        ]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
                     
-                    Stage2DatesView(startDate: $startDate, endDate: $endDate)
-                        .tag(1)
-                    
-                    Stage3BudgetView(budget: $budget)
-                        .tag(2)
-                    
-                    Stage4SpecialRequestsView(specialRequests: $specialRequests)
-                        .tag(3)
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .animation(.easeInOut(duration: 0.3), value: currentStage)
-                .onChange(of: currentStage) { _ in
-                    isTextFieldFocused = false
-                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                }
-                
-                Spacer()
-                
-                VStack(spacing: 16) {
-                    if currentStage < 3 {
-                        Button(action: {
-                            withAnimation {
-                                currentStage += 1
+                    VStack(spacing: 0) {
+                        // Header with optional close button
+                        HStack {
+                            if let dismiss = onDismiss {
+                                Button(action: dismiss) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 28))
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
+                            } else {
+                                Spacer()
+                                    .frame(width: 28)
                             }
-                        }) {
-                            Text("Continue")
-                                .font(.satoshi(size: 18, weight: .bold))
-                                .foregroundColor(.clear)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 56)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.white)
-                                )
-                                .overlay(
+                            
+                            Spacer()
+                            
+                            ProgressBar(currentStage: currentStage, totalStages: 4)
+                            
+                            Spacer()
+                            
+                            // Invisible spacer for alignment
+                            Spacer()
+                                .frame(width: 28)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 60)
+                        
+                        TabView(selection: $currentStage) {
+                            Stage1DestinationView(destination: $destination, isTextFieldFocused: $isTextFieldFocused)
+                                .tag(0)
+                            
+                            Stage2DatesView(startDate: $startDate, endDate: $endDate, isFlexibleDates: $hasFlexibleDates, duration: $tripDuration)
+                                .tag(1)
+                            
+                            Stage3BudgetView(budget: $budget)
+                                .tag(2)
+                            
+                            Stage4SpecialRequestsView(specialRequests: $specialRequests)
+                                .tag(3)
+                        }
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                        .animation(.easeInOut(duration: 0.3), value: currentStage)
+                        .onChange(of: currentStage) { _ in
+                            isTextFieldFocused = false
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 16) {
+                            if currentStage < 3 {
+                                Button(action: {
+                                    withAnimation {
+                                        currentStage += 1
+                                    }
+                                }) {
                                     Text("Continue")
                                         .font(.satoshi(size: 18, weight: .bold))
-                                        .foregroundStyle(
-                                            LinearGradient(
-                                                gradient: Gradient(colors: [
-                                                    Color(red: 0.3, green: 0.5, blue: 1.0),
-                                                    Color(red: 0.6, green: 0.3, blue: 0.9),
-                                                    Color(red: 0.9, green: 0.4, blue: 0.6)
-                                                ]),
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
+                                        .foregroundColor(.clear)
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 56)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.white)
                                         )
-                                )
-                        }
-                        .disabled(!canContinue)
-                        .opacity(canContinue ? 1 : 0.5)
-                        .padding(.horizontal, 32)
-                    } else {
-                        Button(action: {
-                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                            generatePlan()
-                        }) {
-                            Text("Generate My Plan")
-                                .font(.satoshi(size: 18, weight: .bold))
-                                .foregroundColor(.clear)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 56)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.white)
-                                )
-                                .overlay(
+                                        .overlay(
+                                            Text("Continue")
+                                                .font(.satoshi(size: 18, weight: .bold))
+                                                .foregroundStyle(
+                                                    LinearGradient(
+                                                        gradient: Gradient(colors: [
+                                                            Color(red: 0.3, green: 0.5, blue: 1.0),
+                                                            Color(red: 0.6, green: 0.3, blue: 0.9),
+                                                            Color(red: 0.9, green: 0.4, blue: 0.6)
+                                                        ]),
+                                                        startPoint: .leading,
+                                                        endPoint: .trailing
+                                                    )
+                                                )
+                                        )
+                                }
+                                .disabled(!canContinue)
+                                .opacity(canContinue ? 1 : 0.5)
+                                .padding(.horizontal, 32)
+                            } else {
+                                Button(action: {
+                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                    generatePlan()
+                                }) {
                                     Text("Generate My Plan")
                                         .font(.satoshi(size: 18, weight: .bold))
-                                        .foregroundStyle(
-                                            LinearGradient(
-                                                gradient: Gradient(colors: [
-                                                    Color(red: 0.3, green: 0.5, blue: 1.0),
-                                                    Color(red: 0.6, green: 0.3, blue: 0.9),
-                                                    Color(red: 0.9, green: 0.4, blue: 0.6)
-                                                ]),
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
+                                        .foregroundColor(.clear)
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 56)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.white)
                                         )
-                                )
+                                        .overlay(
+                                            Text("Generate My Plan")
+                                                .font(.satoshi(size: 18, weight: .bold))
+                                                .foregroundStyle(
+                                                    LinearGradient(
+                                                        gradient: Gradient(colors: [
+                                                            Color(red: 0.3, green: 0.5, blue: 1.0),
+                                                            Color(red: 0.6, green: 0.3, blue: 0.9),
+                                                            Color(red: 0.9, green: 0.4, blue: 0.6)
+                                                        ]),
+                                                        startPoint: .leading,
+                                                        endPoint: .trailing
+                                                    )
+                                                )
+                                        )
+                                }
+                                .padding(.horizontal, 32)
+                            }
                         }
-                        .padding(.horizontal, 32)
+                        .padding(.bottom, 50)
+                    }
+                    
+                    // Error alert
+                    if let error = generationError {
+                        VStack {
+                            Spacer()
+                            ErrorAlertView(
+                                message: error,
+                                onRetry: {
+                                    generationError = nil
+                                    generatePlan()
+                                },
+                                onDismiss: {
+                                    generationError = nil
+                                }
+                            )
+                            .padding()
+                            Spacer()
+                        }
                     }
                 }
-                .padding(.bottom, 50)
             }
+        }
+        .fullScreenCover(item: $generatedPlan) { plan in
+            TravelPlanView(plan: plan)
+                .onDisappear {
+                    print("=== TravelPlanView DISAPPEARED ===")
+                    print("Setting hasCreatedFirstPlan = true")
+                    // Only set this after user dismisses the plan view
+                    // This allows them to see the plan first
+                    hasCreatedFirstPlan = true
+                    
+                    // If this was called from HomeView (has onDismiss), dismiss the CreateFirstPlanView too
+                    if let dismiss = onDismiss {
+                        print("Dismissing CreateFirstPlanView to return to HomeView")
+                        dismiss()
+                    }
+                }
         }
     }
     
@@ -132,12 +201,112 @@ struct CreateFirstPlanView: View {
         }
     }
     
+    @State private var isGenerating = false
+    @State private var generatedPlan: TravelPlan?
+    @State private var generationError: String?
+    
     private func generatePlan() {
-        print("🚀 Generating plan for: \(destination)")
-        print("📅 Dates: \(startDate) to \(endDate)")
-        print("💰 Budget: \(budget.rawValue)")
-        print("✨ Special: \(specialRequests)")
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        
+        // Prepare plan data
+        let planData = PlanRequestData(
+            destination: destination,
+            startDate: startDate,
+            endDate: endDate,
+            budget: budget.rawValue,
+            specialRequests: specialRequests.isEmpty ? nil : specialRequests,
+            isFlexibleDates: hasFlexibleDates,
+            duration: tripDuration
+        )
+        
+        isGenerating = true
+        generationError = nil
+        
+        Task {
+            do {
+                // Call Cloud Function to generate plan with OpenAI
+                // Note: The Cloud Function already saves the plan to Firestore
+                let plan = try await TravelPlanService.shared.generatePlan(data: planData)
+                
+                await MainActor.run {
+                    print("=== PLAN GENERATED SUCCESSFULLY ===")
+                    print("Plan ID: \(plan.id)")
+                    print("Plan userId: \(plan.userId)")
+                    print("Plan destination: \(plan.destination)")
+                    
+                    generatedPlan = plan
+                    isGenerating = false
+                    
+                    // Don't set hasCreatedFirstPlan here - wait until TravelPlanView is dismissed
+                    // This ensures the plan view is shown first
+                    
+                    // Notify callback about new plan
+                    onPlanCreated?(plan)
+                }
+            } catch {
+                await MainActor.run {
+                    generationError = error.localizedDescription
+                    isGenerating = false
+                }
+            }
+        }
     }
+    
+    private func createMockPlan(data: PlanRequestData) -> TravelPlan {
+        // This will be replaced with actual API response
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: data.startDate, to: data.endDate).day ?? 1
+        
+        var dayItineraries: [DayItinerary] = []
+        var currentDate = data.startDate
+        
+        for dayNum in 1...days {
+            dayItineraries.append(
+                DayItinerary(
+                    dayNumber: dayNum,
+                    date: currentDate,
+                    theme: "Day \(dayNum) Exploration",
+                    activities: [
+                        Activity(
+                            time: "10:00 AM",
+                            name: "Explore \(data.destination)",
+                            description: "Discover the best of \(data.destination)",
+                            duration: "2 hours",
+                            cost: "$50",
+                            location: "City Center"
+                        )
+                    ],
+                    restaurants: [
+                        Restaurant(
+                            name: "Local Restaurant",
+                            cuisine: "Local",
+                            priceRange: data.budget,
+                            time: "Lunch",
+                            reservation: "Recommended"
+                        )
+                    ],
+                    hiddenGems: ["Secret spot in \(data.destination)"],
+                    tip: "Wear comfortable shoes",
+                    estimatedDailyCost: "$150"
+                )
+            )
+            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
+        }
+        
+        return TravelPlan(
+            userId: authViewModel.currentUser?.id ?? "",
+            destination: data.destination,
+            startDate: data.startDate,
+            endDate: data.endDate,
+            budget: data.budget,
+            specialRequests: data.specialRequests,
+            days: dayItineraries,
+            totalEstimatedCost: "$\(days * 150)",
+            highlights: ["Main attraction 1", "Main attraction 2"],
+            localTips: ["Learn basic phrases", "Carry cash"]
+        )
+    }
+    
 }
 
 struct ProgressBar: View {
@@ -213,11 +382,12 @@ struct Stage2DatesView: View {
     @Binding var startDate: Date
     @Binding var endDate: Date
     @State private var selectedPreset: DatePreset? = nil
-    @State private var customDuration: Int = 7
+    @Binding var isFlexibleDates: Bool
+    @Binding var duration: Int
     
-    var tripDuration: Int {
-        if selectedPreset != nil {
-            return customDuration
+    var tripDurationDisplay: Int {
+        if let preset = selectedPreset, preset != .specificDate {
+            return duration
         } else {
             return Calendar.current.dateComponents([.day], from: startDate, to: endDate).day ?? 0
         }
@@ -240,142 +410,142 @@ struct Stage2DatesView: View {
             .padding(.horizontal, 32)
             
             VStack(spacing: 20) {
-                // Quick Presets (3 buttons)
+                // Quick Presets (4 buttons in 2x2 grid)
                 VStack(spacing: 12) {
-                    PresetDateButton(
-                        title: "Next Month",
-                        icon: "calendar.badge.plus",
-                        isSelected: selectedPreset == .nextMonth
-                    ) {
-                        togglePreset(.nextMonth)
+                    HStack(spacing: 12) {
+                        PresetDateButton(
+                            title: "Next Month",
+                            icon: "calendar.badge.plus",
+                            isSelected: selectedPreset == .nextMonth
+                        ) {
+                            togglePreset(.nextMonth)
+                        }
+                        
+                        PresetDateButton(
+                            title: "This Summer",
+                            icon: "sun.max.fill",
+                            isSelected: selectedPreset == .thisSummer
+                        ) {
+                            togglePreset(.thisSummer)
+                        }
                     }
                     
-                    PresetDateButton(
-                        title: "This Summer",
-                        icon: "sun.max.fill",
-                        isSelected: selectedPreset == .thisSummer
-                    ) {
-                        togglePreset(.thisSummer)
-                    }
-                    
-                    PresetDateButton(
-                        title: "I'm Flexible",
-                        icon: "sparkles",
-                        isSelected: selectedPreset == .flexible
-                    ) {
-                        togglePreset(.flexible)
+                    HStack(spacing: 12) {
+                        PresetDateButton(
+                            title: "Anytime",
+                            icon: "questionmark.circle.fill",
+                            isSelected: selectedPreset == .flexible
+                        ) {
+                            togglePreset(.flexible)
+                        }
+                        
+                        PresetDateButton(
+                            title: "Specific Dates",
+                            icon: "calendar.badge.clock",
+                            isSelected: selectedPreset == .specificDate
+                        ) {
+                            togglePreset(.specificDate)
+                        }
                     }
                 }
                 .padding(.horizontal, 32)
                 
-                // Show duration adjuster when preset is selected
-                if selectedPreset != nil {
+                // Show duration adjuster when first 3 presets are selected
+                if let preset = selectedPreset, preset != .specificDate {
                     VStack(spacing: 16) {
                         HStack(spacing: 16) {
                             Button(action: {
-                                if customDuration > 1 {
-                                    customDuration -= 1
+                                if duration > 1 {
+                                    duration -= 1
                                     updateDatesForPreset()
                                 }
                             }) {
                                 Image(systemName: "minus.circle.fill")
                                     .font(.system(size: 32))
-                                    .foregroundColor(.white.opacity(customDuration > 1 ? 1 : 0.3))
+                                    .foregroundColor(.white.opacity(duration > 1 ? 1 : 0.3))
                             }
-                            .disabled(customDuration <= 1)
+                            .disabled(duration <= 1)
                             
                             VStack(spacing: 4) {
-                                Text("\(customDuration)")
+                                Text("\(duration)")
                                     .font(.satoshi(size: 36, weight: .bold))
                                     .foregroundColor(.white)
                                 
-                                Text("day\(customDuration == 1 ? "" : "s") trip")
+                                Text("day\(duration == 1 ? "" : "s") trip")
                                     .font(.satoshi(size: 14, weight: .medium))
                                     .foregroundColor(.white.opacity(0.7))
                             }
                             
                             Button(action: {
-                                if customDuration < 30 {
-                                    customDuration += 1
+                                if duration < 30 {
+                                    duration += 1
                                     updateDatesForPreset()
                                 }
                             }) {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.system(size: 32))
-                                    .foregroundColor(.white.opacity(customDuration < 30 ? 1 : 0.3))
+                                    .foregroundColor(.white.opacity(duration < 30 ? 1 : 0.3))
                             }
-                            .disabled(customDuration >= 30)
+                            .disabled(duration >= 30)
                         }
                     }
                 }
                 
-                // Show "or" divider and date pickers when no preset selected
-                if selectedPreset == nil {
-                    // Divider
-                    HStack {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.2))
-                            .frame(height: 1)
-                        
-                        Text("or")
-                            .font(.satoshi(size: 14, weight: .medium))
-                            .foregroundColor(.white.opacity(0.6))
-                            .padding(.horizontal, 12)
-                        
-                        Rectangle()
-                            .fill(Color.white.opacity(0.2))
-                            .frame(height: 1)
-                    }
-                    .padding(.horizontal, 32)
-                    
-                    // Specific Date Pickers
-                    VStack(spacing: 16) {
-                        Text("Pick specific dates")
-                            .font(.satoshi(size: 16, weight: .medium))
-                            .foregroundColor(.white.opacity(0.8))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 32)
-                        
-                        HStack(spacing: 16) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("From")
-                                    .font(.satoshi(size: 14, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.7))
+                // Show date pickers when "specific date" is selected
+                if selectedPreset == .specificDate {
+                    VStack(spacing: 20) {
+                        VStack(spacing: 12) {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("From")
+                                        .font(.satoshi(size: 14, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.7))
+                                    
+                                    DatePicker("", selection: $startDate, displayedComponents: .date)
+                                        .datePickerStyle(.compact)
+                                        .labelsHidden()
+                                        .colorScheme(.dark)
+                                        .tint(.white)
+                                        .accentColor(.white)
+                                        .environment(\.locale, Locale(identifier: "en_GB"))
+                                }
+                                .frame(maxWidth: .infinity)
                                 
-                                DatePicker("", selection: $startDate, displayedComponents: .date)
-                                    .datePickerStyle(.compact)
-                                    .labelsHidden()
-                                    .colorScheme(.dark)
-                                    .tint(.white)
-                                    .frame(maxWidth: .infinity)
-                            }
-                            
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 20))
-                                .foregroundColor(.white.opacity(0.5))
-                                .padding(.top, 20)
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("To")
-                                    .font(.satoshi(size: 14, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.7))
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.white.opacity(0.5))
+                                    .padding(.top, 24)
                                 
-                                DatePicker("", selection: $endDate, in: startDate..., displayedComponents: .date)
-                                    .datePickerStyle(.compact)
-                                    .labelsHidden()
-                                    .colorScheme(.dark)
-                                    .tint(.white)
-                                    .frame(maxWidth: .infinity)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("To")
+                                        .font(.satoshi(size: 14, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.7))
+                                    
+                                    DatePicker("", selection: $endDate, in: startDate..., displayedComponents: .date)
+                                        .datePickerStyle(.compact)
+                                        .labelsHidden()
+                                        .colorScheme(.dark)
+                                        .tint(.white)
+                                        .accentColor(.white)
+                                        .environment(\.locale, Locale(identifier: "en_GB"))
+                                }
+                                .frame(maxWidth: .infinity)
                             }
                         }
                         .padding(.horizontal, 32)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.white.opacity(0.1))
+                        )
+                        .padding(.horizontal, 32)
                         
                         // Show trip duration for manual dates
-                        if tripDuration > 0 {
+                        if tripDurationDisplay > 0 {
                             HStack(spacing: 8) {
                                 Image(systemName: "calendar")
                                     .font(.system(size: 14))
-                                Text("\(tripDuration) day\(tripDuration == 1 ? "" : "s") trip")
+                                Text("\(tripDurationDisplay) day\(tripDurationDisplay == 1 ? "" : "s") trip")
                                     .font(.satoshi(size: 14, weight: .medium))
                             }
                             .foregroundColor(.white.opacity(0.8))
@@ -399,17 +569,36 @@ struct Stage2DatesView: View {
             if selectedPreset == preset {
                 // Deselect
                 selectedPreset = nil
+                isFlexibleDates = false
             } else {
                 // Select and set dates
                 selectedPreset = preset
-                customDuration = 7 // Default duration
-                updateDatesForPreset()
+                isFlexibleDates = (preset == .flexible)
+                
+                if preset == .specificDate {
+                    // Initialize with reasonable defaults for specific dates
+                    let calendar = Calendar.current
+                    let now = Date()
+                    if startDate < now {
+                        startDate = calendar.date(byAdding: .day, value: 30, to: now) ?? now
+                    }
+                    if endDate <= startDate {
+                        endDate = calendar.date(byAdding: .day, value: 7, to: startDate) ?? startDate
+                    }
+                } else if preset == .flexible {
+                    // For "Anytime", don't set dates - let AI decide
+                    duration = 7 // Default duration, but dates will be determined by AI
+                    // Don't call updateDatesForPreset() for flexible
+                } else {
+                    duration = 7 // Default duration
+                    updateDatesForPreset()
+                }
             }
         }
     }
     
     private func updateDatesForPreset() {
-        guard let preset = selectedPreset else { return }
+        guard let preset = selectedPreset, preset != .specificDate else { return }
         let calendar = Calendar.current
         let now = Date()
         
@@ -419,7 +608,7 @@ struct Stage2DatesView: View {
             if let nextMonth = calendar.date(byAdding: .month, value: 1, to: now),
                let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: nextMonth)) {
                 startDate = startOfMonth
-                endDate = calendar.date(byAdding: .day, value: customDuration, to: startDate) ?? startDate
+                endDate = calendar.date(byAdding: .day, value: duration, to: startDate) ?? startDate
             }
             
         case .thisSummer:
@@ -436,22 +625,28 @@ struct Stage2DatesView: View {
                     // Next year's summer
                     startDate = calendar.date(from: DateComponents(year: currentYear + 1, month: 6, day: 1)) ?? now
                 }
-                endDate = calendar.date(byAdding: .day, value: customDuration, to: startDate) ?? startDate
+                endDate = calendar.date(byAdding: .day, value: duration, to: startDate) ?? startDate
             }
             
         case .flexible:
             // Start: 30 days from now
             startDate = calendar.date(byAdding: .day, value: 30, to: now) ?? now
-            endDate = calendar.date(byAdding: .day, value: customDuration, to: startDate) ?? startDate
+            endDate = calendar.date(byAdding: .day, value: duration, to: startDate) ?? startDate
+            
+        case .specificDate:
+            break
         }
     }
+    
 }
 
 enum DatePreset {
     case nextMonth
     case thisSummer
     case flexible
+    case specificDate
 }
+
 
 struct PresetDateButton: View {
     let title: String
@@ -461,24 +656,26 @@ struct PresetDateButton: View {
     
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            VStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 18))
+                    .font(.system(size: 24))
+                    .frame(height: 24)
                 
                 Text(title)
-                    .font(.satoshi(size: 18, weight: .medium))
+                    .font(.satoshi(size: 14, weight: .medium))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 
-                Spacer()
-                
-                // Always render checkmark, control visibility with opacity
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 22))
-                    .opacity(isSelected ? 1 : 0)
-                    .scaleEffect(isSelected ? 1 : 0.5)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 18))
+                        .frame(height: 18)
+                }
             }
             .foregroundColor(isSelected ? .white : .white.opacity(0.9))
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(height: 120)
             .background(
                 RoundedRectangle(cornerRadius: 16)
                     .fill(isSelected ? Color.white.opacity(0.25) : Color.white.opacity(0.1))
@@ -646,8 +843,104 @@ enum BudgetLevel: String {
     case luxury = "Luxury"
 }
 
+struct PlanRequestData {
+    let destination: String
+    let startDate: Date
+    let endDate: Date
+    let budget: String
+    let specialRequests: String?
+    let isFlexibleDates: Bool
+    let duration: Int
+}
+
+struct PlanGenerationLoadingView: View {
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(red: 0.3, green: 0.5, blue: 1.0),
+                    Color(red: 0.6, green: 0.3, blue: 0.9),
+                    Color(red: 0.9, green: 0.4, blue: 0.6)
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 24) {
+                Spacer()
+                    .frame(height: 240)
+                
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    .scaleEffect(1.5)
+                
+                Text("Planning your adventure...")
+                    .font(.satoshi(size: 28, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Spacer()
+            }
+        }
+    }
+}
+
+struct ErrorAlertView: View {
+    let message: String
+    let onRetry: () -> Void
+    let onDismiss: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 48))
+                .foregroundColor(.white)
+            
+            Text("Oops!")
+                .font(.satoshi(size: 24, weight: .bold))
+                .foregroundColor(.white)
+            
+            Text(message)
+                .font(.satoshi(size: 16, weight: .regular))
+                .foregroundColor(.white.opacity(0.9))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            
+            VStack(spacing: 12) {
+                Button(action: onRetry) {
+                    Text("Try Again")
+                        .font(.satoshi(size: 18, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(0.25))
+                        )
+                }
+                
+                Button(action: onDismiss) {
+                    Text("Cancel")
+                        .font(.satoshi(size: 16, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .padding(.horizontal, 32)
+        }
+        .padding(32)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(Color.white.opacity(0.15))
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+}
+
 #Preview {
-    CreateFirstPlanView()
+    CreateFirstPlanView(hasCreatedFirstPlan: .constant(false))
         .environmentObject(AuthViewModel())
 }
 

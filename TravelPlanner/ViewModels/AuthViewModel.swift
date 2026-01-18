@@ -7,12 +7,13 @@
 
 import Foundation
 import Combine
+import FirebaseAuth
 
 @MainActor
 class AuthViewModel: ObservableObject {
     @Published var isAuthenticated = false
     @Published var currentUser: User?
-    @Published var isLoading = true // Start as true for initial load
+    @Published var isLoading = true
     @Published var errorMessage: String?
     @Published var shouldShowOnboarding = false
     
@@ -28,10 +29,25 @@ class AuthViewModel: ObservableObject {
         if authService.isLoggedIn() {
             Task {
                 do {
-                    currentUser = try await authService.getUser()
+                    let user = try await authService.getUser()
+                    
+                    // If user document doesn't exist in Firestore, sign them out
+                    // This ensures users must explicitly log in
+                    if user == nil {
+                        print("User document not found in Firestore - signing out to require fresh login")
+                        currentUser = nil
+                        isAuthenticated = false
+                        try? authService.logout()
+                        isLoading = false
+                        return
+                    }
+                    
+                    // User document exists - proceed with authentication
+                    currentUser = user
                     isAuthenticated = true
                     shouldShowOnboarding = !authService.hasSeenOnboarding()
                 } catch {
+                    print("Error getting user: \(error)")
                     currentUser = nil
                     isAuthenticated = false
                     try? authService.logout()
@@ -71,11 +87,7 @@ class AuthViewModel: ObservableObject {
             let credential = try await GoogleSignInManager.shared.signIn()
             let user = try await authService.loginWithGoogle(credential: credential)
             currentUser = user
-            
-            // Check AFTER login if they've seen onboarding
             shouldShowOnboarding = !authService.hasSeenOnboarding()
-            
-            // Set authenticated LAST so UI shows onboarding immediately
             isAuthenticated = true
         } catch {
             errorMessage = "Google Sign In failed. Please try again."

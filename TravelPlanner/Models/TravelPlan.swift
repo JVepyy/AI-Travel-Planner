@@ -11,48 +11,154 @@ struct TravelPlan: Codable, Identifiable {
     let id: String
     let userId: String
     let destination: String
+    let displayName: String? // Corrected/formatted destination name from AI
+    let countryCode: String? // ISO 3166-1 alpha-2 country code for flag
     let startDate: Date
     let endDate: Date
-    let description: String
-    let activities: [Activity]
+    let budget: String
+    let specialRequests: String?
+    let days: [DayItinerary]
+    let totalEstimatedCost: String?
+    let highlights: [String]
+    let localTips: [String]
     let createdAt: Date
+    let updatedAt: Date
+    
+    // Computed property for flag emoji
+    var flagEmoji: String? {
+        guard let countryCode = countryCode, countryCode.count == 2 else { return nil }
+        let base: UInt32 = 127397
+        var emoji = ""
+        for scalar in countryCode.uppercased().unicodeScalars {
+            if let unicode = UnicodeScalar(base + scalar.value) {
+                emoji.append(String(unicode))
+            }
+        }
+        return emoji.isEmpty ? nil : emoji
+    }
+    
+    // Display name with fallback to destination
+    var formattedName: String {
+        return displayName ?? destination
+    }
     
     init(id: String = UUID().uuidString,
          userId: String,
          destination: String,
+         displayName: String? = nil,
+         countryCode: String? = nil,
          startDate: Date,
          endDate: Date,
-         description: String,
-         activities: [Activity] = [],
-         createdAt: Date = Date()) {
+         budget: String,
+         specialRequests: String? = nil,
+         days: [DayItinerary] = [],
+         totalEstimatedCost: String? = nil,
+         highlights: [String] = [],
+         localTips: [String] = [],
+         createdAt: Date = Date(),
+         updatedAt: Date = Date()) {
         self.id = id
         self.userId = userId
         self.destination = destination
+        self.displayName = displayName
+        self.countryCode = countryCode
         self.startDate = startDate
         self.endDate = endDate
-        self.description = description
-        self.activities = activities
+        self.budget = budget
+        self.specialRequests = specialRequests
+        self.days = days
+        self.totalEstimatedCost = totalEstimatedCost
+        self.highlights = highlights
+        self.localTips = localTips
         self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+struct DayItinerary: Codable, Identifiable {
+    let id: String
+    let dayNumber: Int
+    let date: Date
+    let theme: String?
+    let activities: [Activity]
+    let restaurants: [Restaurant]
+    let hiddenGems: [String]
+    let tip: String?
+    let estimatedDailyCost: String?
+    
+    init(id: String = UUID().uuidString,
+         dayNumber: Int,
+         date: Date,
+         theme: String? = nil,
+         activities: [Activity] = [],
+         restaurants: [Restaurant] = [],
+         hiddenGems: [String] = [],
+         tip: String? = nil,
+         estimatedDailyCost: String? = nil) {
+        self.id = id
+        self.dayNumber = dayNumber
+        self.date = date
+        self.theme = theme
+        self.activities = activities
+        self.restaurants = restaurants
+        self.hiddenGems = hiddenGems
+        self.tip = tip
+        self.estimatedDailyCost = estimatedDailyCost
     }
 }
 
 struct Activity: Codable, Identifiable {
     let id: String
-    let title: String
+    let time: String
+    let name: String
     let description: String
-    let time: Date
-    let location: String
+    let duration: String?
+    let cost: String?
+    let location: String?
+    let tips: String?
     
     init(id: String = UUID().uuidString,
-         title: String,
+         time: String,
+         name: String,
          description: String,
-         time: Date,
-         location: String) {
+         duration: String? = nil,
+         cost: String? = nil,
+         location: String? = nil,
+         tips: String? = nil) {
         self.id = id
-        self.title = title
-        self.description = description
         self.time = time
+        self.name = name
+        self.description = description
+        self.duration = duration
+        self.cost = cost
         self.location = location
+        self.tips = tips
+    }
+}
+
+struct Restaurant: Codable, Identifiable {
+    let id: String
+    let name: String
+    let cuisine: String?
+    let priceRange: String?
+    let time: String
+    let reservation: String?
+    let description: String?
+    
+    init(id: String = UUID().uuidString,
+         name: String,
+         cuisine: String? = nil,
+         priceRange: String? = nil,
+         time: String,
+         reservation: String? = nil,
+         description: String? = nil) {
+        self.id = id
+        self.name = name
+        self.cuisine = cuisine
+        self.priceRange = priceRange
+        self.time = time
+        self.reservation = reservation
+        self.description = description
     }
 }
 

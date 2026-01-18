@@ -2,44 +2,108 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var authViewModel = AuthViewModel()
-    @State private var hasCreatedFirstPlan = false
+    @State private var hasCreatedFirstPlan: Bool? = nil // nil = still checking
     
     var body: some View {
         ZStack {
-            if authViewModel.isLoading {
+            // Show loading if: still loading auth, or authenticated but no user yet, or checking plans
+            if authViewModel.isLoading || 
+               (authViewModel.isAuthenticated && authViewModel.currentUser == nil) ||
+               (authViewModel.isAuthenticated && authViewModel.currentUser != nil && hasCreatedFirstPlan == nil) {
                 LoadingView()
             } else {
-                NavigationView {
-                    Group {
-                        if authViewModel.isAuthenticated {
-                            if authViewModel.shouldShowOnboarding {
-                                OnboardingView(showOnboarding: .constant(true))
-                                    .environmentObject(authViewModel)
-                            } else if !hasCreatedFirstPlan {
-                                CreateFirstPlanView()
-                                    .environmentObject(authViewModel)
-                            } else {
+                Group {
+                    if authViewModel.isAuthenticated && authViewModel.currentUser != nil {
+                        // User is authenticated and loaded
+                        if authViewModel.shouldShowOnboarding {
+                            OnboardingView(showOnboarding: .constant(true))
+                                .environmentObject(authViewModel)
+                        } else if hasCreatedFirstPlan == false {
+                            CreateFirstPlanView(hasCreatedFirstPlan: Binding(
+                                get: { hasCreatedFirstPlan ?? false },
+                                set: { hasCreatedFirstPlan = $0 }
+                            ))
+                            .environmentObject(authViewModel)
+                        } else {
+                            NavigationView {
                                 HomeView(viewModel: authViewModel)
                             }
-                        } else {
-                            WelcomeView()
-                                .environmentObject(authViewModel)
                         }
+                    } else {
+                        // Not authenticated - show login
+                        WelcomeView()
+                            .environmentObject(authViewModel)
                     }
                 }
-                .animation(.easeInOut(duration: 0.3), value: authViewModel.isAuthenticated)
             }
         }
-        .animation(.easeInOut(duration: 0.4), value: authViewModel.isLoading)
         .onAppear {
-            checkIfUserHasPlans()
+            print("=== CONTENTVIEW APPEARED ===")
+            print("isLoading: \(authViewModel.isLoading)")
+            print("isAuthenticated: \(authViewModel.isAuthenticated)")
+            print("currentUser: \(String(describing: authViewModel.currentUser))")
+            
+            if !authViewModel.isLoading && authViewModel.isAuthenticated {
+                print("Calling checkIfUserHasPlans from onAppear")
+                checkIfUserHasPlans()
+            }
+        }
+        .onChange(of: authViewModel.currentUser) { user in
+            print("=== CURRENT USER CHANGED ===")
+            print("New user: \(String(describing: user))")
+            if user != nil {
+                print("Calling checkIfUserHasPlans from onChange(currentUser)")
+                checkIfUserHasPlans()
+            }
+        }
+        .onChange(of: authViewModel.isAuthenticated) { isAuth in
+            print("=== AUTHENTICATION CHANGED ===")
+            print("isAuthenticated: \(isAuth)")
+            if !isAuth {
+                hasCreatedFirstPlan = nil
+            }
+            // Don't check plans here - wait for currentUser to be set
+        }
+        .onChange(of: authViewModel.isLoading) { isLoading in
+            print("=== LOADING CHANGED ===")
+            print("isLoading: \(isLoading)")
+            // Don't check plans here - wait for currentUser to be set
         }
     }
     
     private func checkIfUserHasPlans() {
-        // For now, always show CreateFirstPlanView after onboarding
-        // Later we'll check Firestore if user has any plans
-        hasCreatedFirstPlan = false
+        print("=== CHECK IF USER HAS PLANS ===")
+        print("currentUser: \(String(describing: authViewModel.currentUser))")
+        print("currentUser.id: \(authViewModel.currentUser?.id ?? "NIL")")
+        
+        guard let userId = authViewModel.currentUser?.id else {
+            print("ERROR: No userId available!")
+            hasCreatedFirstPlan = false
+            return
+        }
+        
+        print("Checking plans for userId: \(userId)")
+        
+        Task {
+            do {
+                let plans = try await TravelPlanService.shared.getUserPlans(userId: userId)
+                await MainActor.run {
+                    hasCreatedFirstPlan = !plans.isEmpty
+                    print("=== PLANS CHECK RESULT ===")
+                    print("Found \(plans.count) plans")
+                    print("hasCreatedFirstPlan = \(hasCreatedFirstPlan ?? false)")
+                    for plan in plans {
+                        print("  - Plan: \(plan.destination), userId: \(plan.userId)")
+                    }
+                }
+            } catch {
+                print("=== PLANS CHECK ERROR ===")
+                print("Error: \(error)")
+                await MainActor.run {
+                    hasCreatedFirstPlan = false
+                }
+            }
+        }
     }
 }
 
@@ -58,6 +122,8 @@ struct LoadingView: View {
             .ignoresSafeArea()
             
             VStack(spacing: 24) {
+                Spacer()
+                 .frame(height: 240)                   
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                     .scaleEffect(1.5)
@@ -65,6 +131,8 @@ struct LoadingView: View {
                 Text("Travel Planner")
                     .font(.satoshi(size: 28, weight: .bold))
                     .foregroundColor(.white)
+                
+                Spacer()
             }
         }
     }
