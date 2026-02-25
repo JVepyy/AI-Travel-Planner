@@ -123,7 +123,7 @@ struct LoadingView: View {
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                     .scaleEffect(1.5)
                 
-                Text("WanderPlan")
+                Text("Travel Planner")
                     .font(.satoshi(size: 28, weight: .bold))
                     .foregroundColor(.white)
                 

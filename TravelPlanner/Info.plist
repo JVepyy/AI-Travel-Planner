@@ -5,7 +5,7 @@
 	<key>CFBundleIdentifier</key>
 	<string></string>
 	<key>CFBundleDisplayName</key>
-	<string>WanderPlan</string>
+	<string>Travel Planner</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Lora-Regular.ttf</string>
