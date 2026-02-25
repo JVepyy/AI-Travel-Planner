@@ -10,7 +10,7 @@ struct OnboardingPage: Identifiable {
 let onboardingPages: [OnboardingPage] = [
     OnboardingPage(
         icon: "airplane.departure",
-        title: "Hi, I'm Travel Planner, your new travel friend!",
+        title: "Hi, I'm WanderPlan, your new travel friend!",
         description: "Let's create your perfect journey together."
     ),
     OnboardingPage(

@@ -1,6 +1,7 @@
 import Foundation
 import FirebaseFirestore
 import FirebaseFunctions
+import FirebaseAuth
 
 class TravelPlanService {
     static let shared = TravelPlanService()
@@ -32,27 +33,66 @@ class TravelPlanService {
         
         print("Calling Cloud Function with data: \(requestData)")
         
-        let result = try await generatePlanFunction.call(requestData)
+        do {
+            let result = try await generatePlanFunction.call(requestData)
         
-        print("=== CLOUD FUNCTION RESPONSE ===")
-        print("Raw result.data: \(String(describing: result.data))")
-        
-        guard let responseData = result.data as? [String: Any],
-              let planData = responseData["plan"] as? [String: Any] else {
-            print("ERROR: Invalid response structure")
-            throw NSError(domain: "TravelPlanService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response from server"])
+            print("=== CLOUD FUNCTION RESPONSE ===")
+            print("Raw result.data: \(String(describing: result.data))")
+            
+            guard let responseData = result.data as? [String: Any],
+                  let planData = responseData["plan"] as? [String: Any] else {
+                print("ERROR: Invalid response structure")
+                throw NSError(domain: "TravelPlanService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response from server"])
+            }
+            
+            print("Plan data userId: \(planData["userId"] ?? "NIL")")
+            print("Plan data id: \(planData["id"] ?? "NIL")")
+            
+            let plan = try parsePlan(from: planData)
+            print("=== PARSED PLAN ===")
+            print("Plan.id: \(plan.id)")
+            print("Plan.userId: \(plan.userId)")
+            print("Plan.destination: \(plan.destination)")
+            
+            return plan
+        } catch let error as NSError {
+            let isTimeoutError = error.domain == NSURLErrorDomain && error.code == -1001
+            if isTimeoutError {
+                print("=== TIMEOUT ERROR DETECTED - CHECKING FIRESTORE ===")
+                print("Error domain: \(error.domain), code: \(error.code)")
+                
+                for attempt in 1...3 {
+                    let waitTime = UInt64(attempt * 3) * 1_000_000_000
+                    print("Waiting \(attempt * 3) seconds before checking Firestore (attempt \(attempt)/3)...")
+                    try await Task.sleep(nanoseconds: waitTime)
+                    
+                    if let userId = Auth.auth().currentUser?.uid {
+                        let plans = try await getUserPlans(userId: userId)
+                        print("Found \(plans.count) plans in Firestore")
+                        
+                        if let latestPlan = plans.first {
+                            let requestedDestination = data.destination.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                            let planDestination = latestPlan.destination.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                            let planDisplayName = latestPlan.displayName?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                            
+                            if planDestination.contains(requestedDestination) || 
+                               requestedDestination.contains(planDestination) ||
+                               (!planDisplayName.isEmpty && (planDisplayName.contains(requestedDestination) || requestedDestination.contains(planDisplayName))) {
+                                print("=== FOUND PLAN IN FIRESTORE AFTER TIMEOUT ===")
+                                print("Plan ID: \(latestPlan.id)")
+                                print("Plan destination: \(latestPlan.destination)")
+                                return latestPlan
+                            } else {
+                                print("Latest plan destination '\(latestPlan.destination)' doesn't match requested '\(data.destination)'")
+                            }
+                        }
+                    }
+                }
+                
+                print("=== COULD NOT FIND PLAN IN FIRESTORE AFTER TIMEOUT ===")
+            }
+            throw error
         }
-        
-        print("Plan data userId: \(planData["userId"] ?? "NIL")")
-        print("Plan data id: \(planData["id"] ?? "NIL")")
-        
-        let plan = try parsePlan(from: planData)
-        print("=== PARSED PLAN ===")
-        print("Plan.id: \(plan.id)")
-        print("Plan.userId: \(plan.userId)")
-        print("Plan.destination: \(plan.destination)")
-        
-        return plan
     }
     
     func savePlan(_ plan: TravelPlan) async throws {
@@ -86,7 +126,6 @@ class TravelPlanService {
         data["highlights"] = plan.highlights
         data["localTips"] = plan.localTips
         
-        // Encode days
         data["days"] = plan.days.map { day in
             var dayData: [String: Any] = [
                 "id": day.id,
@@ -168,12 +207,10 @@ class TravelPlanService {
             }
         }
         
-        // Sort by createdAt descending in memory
         return plans.sorted { $0.createdAt > $1.createdAt }
     }
     
     private func parsePlan(from data: [String: Any]) throws -> TravelPlan {
-        // This is a simplified parser - in production, you'd want more robust error handling
         let id = data["id"] as? String ?? UUID().uuidString
         let userId = data["userId"] as? String ?? ""
         let destination = data["destination"] as? String ?? ""
@@ -269,45 +306,37 @@ class TravelPlanService {
         try await db.collection("travelPlans").document(planId).delete()
     }
     
-    // Helper function to parse dates from various formats
     private func parseDate(from value: Any?) -> Date? {
         guard let value = value else { return nil }
         
-        // If it's already a Timestamp
         if let timestamp = value as? Timestamp {
             return timestamp.dateValue()
         }
         
-        // If it's a String (ISO8601 format from Cloud Function)
         if let dateString = value as? String {
-            // Try ISO8601 with fractional seconds
             let isoFormatter = ISO8601DateFormatter()
             isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             if let date = isoFormatter.date(from: dateString) {
                 return date
             }
             
-            // Try ISO8601 without fractional seconds
             isoFormatter.formatOptions = [.withInternetDateTime]
             if let date = isoFormatter.date(from: dateString) {
                 return date
             }
             
-            // Try basic date format
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd"
             if let date = dateFormatter.date(from: dateString) {
                 return date
             }
             
-            // Try full ISO format
             dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
             if let date = dateFormatter.date(from: dateString) {
                 return date
             }
         }
         
-        // If it's a Double (Unix timestamp)
         if let timestamp = value as? Double {
             return Date(timeIntervalSince1970: timestamp / 1000) // Convert from milliseconds
         }

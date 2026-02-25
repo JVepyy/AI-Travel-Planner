@@ -3,8 +3,8 @@ import SwiftUI
 struct CreateFirstPlanView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @Binding var hasCreatedFirstPlan: Bool
-    var onDismiss: (() -> Void)? = nil // Optional close action
-    var onPlanCreated: ((TravelPlan) -> Void)? = nil // Callback when plan is created
+    var onDismiss: (() -> Void)? = nil
+    var onPlanCreated: ((TravelPlan) -> Void)? = nil
     
     @State private var currentStage = 0
     @State private var destination = ""
@@ -14,12 +14,20 @@ struct CreateFirstPlanView: View {
     @State private var specialRequests = ""
     @FocusState private var isTextFieldFocused: Bool
     @State private var hasFlexibleDates = false
-    @State private var tripDuration: Int = 7
+    @State private var tripDuration: Int = 3
+    @State private var hasSelectedDates = false
     
     var body: some View {
         Group {
             if isGenerating {
                 PlanGenerationLoadingView()
+            } else if let error = generationError {
+                ValidationErrorView(
+                    errorMessage: error,
+                    onTryAgain: {
+                        generationError = nil
+                    }
+                )
             } else {
                 ZStack {
                     LinearGradient(
@@ -34,7 +42,6 @@ struct CreateFirstPlanView: View {
                     .ignoresSafeArea()
                     
                     VStack(spacing: 0) {
-                        // Header with optional close button
                         HStack {
                             if let dismiss = onDismiss {
                                 Button(action: dismiss) {
@@ -53,7 +60,6 @@ struct CreateFirstPlanView: View {
                             
                             Spacer()
                             
-                            // Invisible spacer for alignment
                             Spacer()
                                 .frame(width: 28)
                         }
@@ -64,7 +70,13 @@ struct CreateFirstPlanView: View {
                             Stage1DestinationView(destination: $destination, isTextFieldFocused: $isTextFieldFocused)
                                 .tag(0)
                             
-                            Stage2DatesView(startDate: $startDate, endDate: $endDate, isFlexibleDates: $hasFlexibleDates, duration: $tripDuration)
+                            Stage2DatesView(
+                                startDate: $startDate,
+                                endDate: $endDate,
+                                isFlexibleDates: $hasFlexibleDates,
+                                duration: $tripDuration,
+                                hasSelectedDates: $hasSelectedDates
+                            )
                                 .tag(1)
                             
                             Stage3BudgetView(budget: $budget)
@@ -152,41 +164,21 @@ struct CreateFirstPlanView: View {
                         }
                         .padding(.bottom, 50)
                     }
-                    
-                    // Error alert
-                    if let error = generationError {
-                        VStack {
-                            Spacer()
-                            ErrorAlertView(
-                                message: error,
-                                onRetry: {
-                                    generationError = nil
-                                    generatePlan()
-                                },
-                                onDismiss: {
-                                    generationError = nil
-                                }
-                            )
-                            .padding()
-                            Spacer()
-                        }
-                    }
                 }
             }
         }
         .fullScreenCover(item: $generatedPlan) { plan in
             TravelPlanView(plan: plan)
                 .onDisappear {
-                    print("=== TravelPlanView DISAPPEARED ===")
-                    print("Setting hasCreatedFirstPlan = true")
-                    // Only set this after user dismisses the plan view
-                    // This allows them to see the plan first
-                    hasCreatedFirstPlan = true
-                    
-                    // If this was called from HomeView (has onDismiss), dismiss the CreateFirstPlanView too
                     if let dismiss = onDismiss {
-                        print("Dismissing CreateFirstPlanView to return to HomeView")
                         dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            hasCreatedFirstPlan = true
+                        }
+                    } else {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            hasCreatedFirstPlan = true
+                        }
                     }
                 }
         }
@@ -208,9 +200,23 @@ struct CreateFirstPlanView: View {
     private func generatePlan() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         
-        // Prepare plan data
+        var missingFields: [String] = []
+        
+        if destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            missingFields.append("destination")
+        }
+        
+        if !hasSelectedDates {
+            missingFields.append("trip dates")
+        }
+        
+        if !missingFields.isEmpty {
+            let errorMessage = missingFields.joined(separator: " and ")
+            generationError = errorMessage
+            return
+        }
         let planData = PlanRequestData(
-            destination: destination,
+            destination: destination.trimmingCharacters(in: .whitespacesAndNewlines),
             startDate: startDate,
             endDate: endDate,
             budget: budget.rawValue,
@@ -224,23 +230,13 @@ struct CreateFirstPlanView: View {
         
         Task {
             do {
-                // Call Cloud Function to generate plan with OpenAI
-                // Note: The Cloud Function already saves the plan to Firestore
                 let plan = try await TravelPlanService.shared.generatePlan(data: planData)
                 
                 await MainActor.run {
-                    print("=== PLAN GENERATED SUCCESSFULLY ===")
-                    print("Plan ID: \(plan.id)")
-                    print("Plan userId: \(plan.userId)")
-                    print("Plan destination: \(plan.destination)")
-                    
                     generatedPlan = plan
-                    isGenerating = false
-                    
-                    // Don't set hasCreatedFirstPlan here - wait until TravelPlanView is dismissed
-                    // This ensures the plan view is shown first
-                    
-                    // Notify callback about new plan
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        isGenerating = false
+                    }
                     onPlanCreated?(plan)
                 }
             } catch {
@@ -251,62 +247,6 @@ struct CreateFirstPlanView: View {
             }
         }
     }
-    
-    private func createMockPlan(data: PlanRequestData) -> TravelPlan {
-        // This will be replaced with actual API response
-        let calendar = Calendar.current
-        let days = calendar.dateComponents([.day], from: data.startDate, to: data.endDate).day ?? 1
-        
-        var dayItineraries: [DayItinerary] = []
-        var currentDate = data.startDate
-        
-        for dayNum in 1...days {
-            dayItineraries.append(
-                DayItinerary(
-                    dayNumber: dayNum,
-                    date: currentDate,
-                    theme: "Day \(dayNum) Exploration",
-                    activities: [
-                        Activity(
-                            time: "10:00 AM",
-                            name: "Explore \(data.destination)",
-                            description: "Discover the best of \(data.destination)",
-                            duration: "2 hours",
-                            cost: "$50",
-                            location: "City Center"
-                        )
-                    ],
-                    restaurants: [
-                        Restaurant(
-                            name: "Local Restaurant",
-                            cuisine: "Local",
-                            priceRange: data.budget,
-                            time: "Lunch",
-                            reservation: "Recommended"
-                        )
-                    ],
-                    hiddenGems: ["Secret spot in \(data.destination)"],
-                    tip: "Wear comfortable shoes",
-                    estimatedDailyCost: "$150"
-                )
-            )
-            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
-        }
-        
-        return TravelPlan(
-            userId: authViewModel.currentUser?.id ?? "",
-            destination: data.destination,
-            startDate: data.startDate,
-            endDate: data.endDate,
-            budget: data.budget,
-            specialRequests: data.specialRequests,
-            days: dayItineraries,
-            totalEstimatedCost: "$\(days * 150)",
-            highlights: ["Main attraction 1", "Main attraction 2"],
-            localTips: ["Learn basic phrases", "Carry cash"]
-        )
-    }
-    
 }
 
 struct ProgressBar: View {
@@ -343,7 +283,6 @@ struct Stage1DestinationView: View {
                         .foregroundColor(.white.opacity(0.8))
                 }
                 
-                // Text Field Card
                 HStack(spacing: 12) {
                     Image(systemName: "globe")
                         .font(.system(size: 20))
@@ -384,6 +323,7 @@ struct Stage2DatesView: View {
     @State private var selectedPreset: DatePreset? = nil
     @Binding var isFlexibleDates: Bool
     @Binding var duration: Int
+    @Binding var hasSelectedDates: Bool
     
     var tripDurationDisplay: Int {
         if let preset = selectedPreset, preset != .specificDate {
@@ -410,7 +350,6 @@ struct Stage2DatesView: View {
             .padding(.horizontal, 32)
             
             VStack(spacing: 20) {
-                // Quick Presets (4 buttons in 2x2 grid)
                 VStack(spacing: 12) {
                     HStack(spacing: 12) {
                         PresetDateButton(
@@ -450,7 +389,6 @@ struct Stage2DatesView: View {
                 }
                 .padding(.horizontal, 32)
                 
-                // Show duration adjuster when first 3 presets are selected
                 if let preset = selectedPreset, preset != .specificDate {
                     VStack(spacing: 16) {
                         HStack(spacing: 16) {
@@ -477,21 +415,20 @@ struct Stage2DatesView: View {
                             }
                             
                             Button(action: {
-                                if duration < 30 {
+                                if duration < 7 {
                                     duration += 1
                                     updateDatesForPreset()
                                 }
                             }) {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.system(size: 32))
-                                    .foregroundColor(.white.opacity(duration < 30 ? 1 : 0.3))
+                                    .foregroundColor(.white.opacity(duration < 7 ? 1 : 0.3))
                             }
-                            .disabled(duration >= 30)
+                            .disabled(duration >= 7)
                         }
                     }
                 }
                 
-                // Show date pickers when "specific date" is selected
                 if selectedPreset == .specificDate {
                     VStack(spacing: 20) {
                         VStack(spacing: 12) {
@@ -508,6 +445,9 @@ struct Stage2DatesView: View {
                                         .tint(.white)
                                         .accentColor(.white)
                                         .environment(\.locale, Locale(identifier: "en_GB"))
+                                        .onChange(of: startDate) { _ in
+                                            hasSelectedDates = true
+                                        }
                                 }
                                 .frame(maxWidth: .infinity)
                                 
@@ -528,6 +468,9 @@ struct Stage2DatesView: View {
                                         .tint(.white)
                                         .accentColor(.white)
                                         .environment(\.locale, Locale(identifier: "en_GB"))
+                                        .onChange(of: endDate) { _ in
+                                            hasSelectedDates = true
+                                        }
                                 }
                                 .frame(maxWidth: .infinity)
                             }
@@ -540,7 +483,6 @@ struct Stage2DatesView: View {
                         )
                         .padding(.horizontal, 32)
                         
-                        // Show trip duration for manual dates
                         if tripDurationDisplay > 0 {
                             HStack(spacing: 8) {
                                 Image(systemName: "calendar")
@@ -567,16 +509,15 @@ struct Stage2DatesView: View {
     private func togglePreset(_ preset: DatePreset) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
             if selectedPreset == preset {
-                // Deselect
                 selectedPreset = nil
                 isFlexibleDates = false
+                hasSelectedDates = false
             } else {
-                // Select and set dates
                 selectedPreset = preset
                 isFlexibleDates = (preset == .flexible)
+                hasSelectedDates = true
                 
                 if preset == .specificDate {
-                    // Initialize with reasonable defaults for specific dates
                     let calendar = Calendar.current
                     let now = Date()
                     if startDate < now {
@@ -586,11 +527,9 @@ struct Stage2DatesView: View {
                         endDate = calendar.date(byAdding: .day, value: 7, to: startDate) ?? startDate
                     }
                 } else if preset == .flexible {
-                    // For "Anytime", don't set dates - let AI decide
-                    duration = 7 // Default duration, but dates will be determined by AI
-                    // Don't call updateDatesForPreset() for flexible
+                    duration = 3
                 } else {
-                    duration = 7 // Default duration
+                    duration = 3
                     updateDatesForPreset()
                 }
             }
@@ -604,7 +543,6 @@ struct Stage2DatesView: View {
         
         switch preset {
         case .nextMonth:
-            // Start: Beginning of next month
             if let nextMonth = calendar.date(byAdding: .month, value: 1, to: now),
                let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: nextMonth)) {
                 startDate = startOfMonth
@@ -612,7 +550,6 @@ struct Stage2DatesView: View {
             }
             
         case .thisSummer:
-            // Start: June 1st or July 1st (whichever is closer in the future)
             let components = calendar.dateComponents([.year, .month], from: now)
             if let currentYear = components.year {
                 if let june1st = calendar.date(from: DateComponents(year: currentYear, month: 6, day: 1)),
@@ -622,14 +559,12 @@ struct Stage2DatesView: View {
                           july1st > now {
                     startDate = july1st
                 } else {
-                    // Next year's summer
                     startDate = calendar.date(from: DateComponents(year: currentYear + 1, month: 6, day: 1)) ?? now
                 }
                 endDate = calendar.date(byAdding: .day, value: duration, to: startDate) ?? startDate
             }
             
         case .flexible:
-            // Start: 30 days from now
             startDate = calendar.date(byAdding: .day, value: 30, to: now) ?? now
             endDate = calendar.date(byAdding: .day, value: duration, to: startDate) ?? startDate
             
@@ -885,29 +820,50 @@ struct PlanGenerationLoadingView: View {
     }
 }
 
-struct ErrorAlertView: View {
-    let message: String
-    let onRetry: () -> Void
-    let onDismiss: () -> Void
+struct ValidationErrorView: View {
+    let errorMessage: String
+    let onTryAgain: () -> Void
     
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 48))
-                .foregroundColor(.white)
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(red: 0.3, green: 0.5, blue: 1.0),
+                    Color(red: 0.6, green: 0.3, blue: 0.9),
+                    Color(red: 0.9, green: 0.4, blue: 0.6)
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
             
-            Text("Oops!")
-                .font(.satoshi(size: 24, weight: .bold))
-                .foregroundColor(.white)
-            
-            Text(message)
-                .font(.satoshi(size: 16, weight: .regular))
-                .foregroundColor(.white.opacity(0.9))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            
-            VStack(spacing: 12) {
-                Button(action: onRetry) {
+            VStack(spacing: 32) {
+                Spacer()
+                
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 64))
+                    .foregroundColor(.white)
+                
+                Text("Oops!")
+                    .font(.satoshi(size: 32, weight: .bold))
+                    .foregroundColor(.white)
+                
+                VStack(spacing: 12) {
+                    Text("Missing required fields:")
+                        .font(.satoshi(size: 18, weight: .medium))
+                        .foregroundColor(.white.opacity(0.9))
+                    
+                    Text(errorMessage)
+                        .font(.satoshi(size: 16, weight: .regular))
+                        .foregroundColor(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                        .padding(.top, 4)
+                }
+                
+                Spacer()
+                
+                Button(action: onTryAgain) {
                     Text("Try Again")
                         .font(.satoshi(size: 18, weight: .bold))
                         .foregroundColor(.white)
@@ -916,26 +872,16 @@ struct ErrorAlertView: View {
                         .background(
                             Capsule()
                                 .fill(Color.white.opacity(0.25))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                                )
                         )
                 }
-                
-                Button(action: onDismiss) {
-                    Text("Cancel")
-                        .font(.satoshi(size: 16, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
-                }
+                .padding(.horizontal, 32)
+                .padding(.bottom, 50)
             }
-            .padding(.horizontal, 32)
         }
-        .padding(32)
-        .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(Color.white.opacity(0.15))
-                .background(
-                    RoundedRectangle(cornerRadius: 24)
-                        .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                )
-        )
     }
 }
 

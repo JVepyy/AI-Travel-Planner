@@ -26,6 +26,7 @@ function getOpenAIClient() {
 exports.generateTravelPlan = onCall(
     {
       secrets: [openaiApiKey], // Grant access to the secret
+      timeoutSeconds: 300, // 5 minutes timeout (max is 540 for gen2)
     },
     async (request) => {
   try {
@@ -120,7 +121,7 @@ exports.generateTravelPlan = onCall(
     logger.info(`Plan ID: ${planId}`);
     logger.info(`User ID in firestoreData: ${firestoreData.userId}`);
     logger.info(`Destination: ${firestoreData.destination}`);
-    
+
     await admin.firestore()
         .collection("travelPlans")
         .doc(planId)
@@ -200,120 +201,72 @@ async function generatePlanWithOpenAI({destination, startDate, endDate, budget, 
   }
 
   const dateInfo = isFlexibleDates 
-    ? `- Dates: FLEXIBLE - You should determine the BEST time to visit ${destination} based on:
-  * Weather patterns and seasons
-  * Peak vs off-peak travel times
-  * Local events and festivals
-  * Tourist crowds and prices
-  * Optimal conditions for activities
-  Choose the best start date. The trip MUST be exactly ${duration} days long.
-  IMPORTANT: Generate EXACTLY ${duration} day itineraries with proper dates.`
-    : `- Start Date: ${new Date(startDate).toLocaleDateString("en-US", {month: "long", day: "numeric", year: "numeric"})}
-- End Date: ${new Date(endDate).toLocaleDateString("en-US", {month: "long", day: "numeric", year: "numeric"})}
-- Duration: ${days} days`;
+    ? `Dates: FLEXIBLE - determine best time to visit. Trip must be exactly ${duration} days.`
+    : `Start: ${new Date(startDate).toLocaleDateString("en-US", {month: "short", day: "numeric"})}, End: ${new Date(endDate).toLocaleDateString("en-US", {month: "short", day: "numeric"})} (${days} days)`;
 
-  const prompt = `You are an expert travel planner. Create a detailed, day-by-day travel itinerary for ${destination}.
+  const prompt = `Create a ${duration}-day travel itinerary for ${destination}. Budget: ${budget}.${specialRequests ? ` Notes: ${specialRequests}` : ""} ${dateInfo}
 
-Travel Details:
-- Destination: ${destination}
-${dateInfo}
-- Budget Level: ${budget}
-${specialRequests ? `- Special Requests: ${specialRequests}` : ""}
-
-IMPORTANT: Use real-time web browsing to get CURRENT information about:
-- Current prices for attractions, restaurants, and activities
-- Recent reviews and recommendations
-- Current weather patterns
-- Up-to-date opening hours and availability
-- Latest travel tips and local insights
-- Current exchange rates if applicable
-
-Generate a comprehensive travel plan with the following structure (respond ONLY with valid JSON):
-
+Respond with JSON only:
 {
-  "displayName": "Corrected/proper name of the destination (e.g., 'Machu Picchu, Peru' if user wrote 'machu piktu')",
-  "countryCode": "ISO 3166-1 alpha-2 country code (e.g., 'PE' for Peru, 'JP' for Japan, 'FR' for France)",
+  "displayName": "Proper destination name",
+  "countryCode": "2-letter ISO code",${isFlexibleDates ? `
+  "suggestedStartDate": "YYYY-MM-DD",
+  "suggestedEndDate": "YYYY-MM-DD",` : ""}
   "days": [
     {
       "dayNumber": 1,
-      "date": "${isFlexibleDates ? "YYYY-MM-DD (determine best date)" : startDate.toISOString()}",
-      "theme": "Brief theme for the day (e.g., 'Arrival & City Exploration')",
+      "date": "YYYY-MM-DD",
+      "theme": "Day theme",
       "activities": [
-        {
-          "time": "10:00 AM",
-          "name": "Activity name",
-          "description": "Brief description (1-2 sentences max)",
-          "duration": "2 hours",
-          "cost": "$25",
-          "location": "Specific location/address",
-          "tips": "Helpful tips for this activity"
-        }
+        {"time": "10:00 AM", "name": "Activity", "description": "Brief desc", "duration": "2h", "cost": "$25", "location": "Address"}
       ],
       "restaurants": [
-        {
-          "name": "Restaurant name",
-          "cuisine": "Type of cuisine",
-          "priceRange": "${budget}",
-          "time": "Lunch",
-          "reservation": "Recommended/Required/Not needed",
-          "description": "Why this restaurant is great"
-        }
+        {"name": "Restaurant", "cuisine": "Type", "time": "Lunch", "priceRange": "${budget}"}
       ],
-      "hiddenGems": ["Local secret spot 1", "Hidden gem 2"],
-      "tip": "One practical tip for the day",
+      "hiddenGems": ["Hidden gem"],
+      "tip": "Daily tip",
       "estimatedDailyCost": "$150"
     }
   ],
-  "highlights": ["Top attraction 1", "Must-see 2"],
-  "localTips": ["Local insight 1", "Cultural tip 2", "Practical tip 3"],
-  "totalEstimatedCost": "$$$"${isFlexibleDates ? `,
-  "suggestedStartDate": "YYYY-MM-DD (the best start date you determined)",
-  "suggestedEndDate": "YYYY-MM-DD (the best end date you determined)"` : ""}
+  "highlights": ["Highlight 1", "Highlight 2"],
+  "localTips": ["Tip 1", "Tip 2"],
+  "totalEstimatedCost": "$$$"
 }
 
-Make sure to:
-- ALWAYS include "displayName" with the corrected/proper destination name
-- ALWAYS include "countryCode" with the 2-letter ISO country code
-- Include 2-4 activities per day
-- Include 2-3 restaurant recommendations per day
-- Keep ALL descriptions SHORT (1-2 sentences max, be concise)
-- Include ONLY 2 highlights maximum
-- Use REAL current prices from web search
-- Include specific locations and addresses
-- Make it practical and actionable
-- Consider the budget level (${budget})
-- Include unique local experiences
-- Provide helpful tips and insights
-${isFlexibleDates ? `
-CRITICAL for flexible dates:
-- You MUST generate EXACTLY ${duration} days of itinerary (no more, no less)
-- You MUST provide "suggestedStartDate" and "suggestedEndDate" in YYYY-MM-DD format
-- suggestedEndDate must be exactly ${duration - 1} days after suggestedStartDate
-- Each day's "date" field MUST be a valid date in YYYY-MM-DD format, starting from suggestedStartDate
-- Dates should be sequential (day 1 = suggestedStartDate, day 2 = suggestedStartDate + 1 day, etc.)
-- Choose dates based on best weather, events, and travel conditions for ${destination}` : ""}`;
+Rules:
+- 2 activities per day, 2 restaurants per day (lunch + dinner)
+- Keep descriptions under 15 words
+- 2 highlights max, 2 local tips max
+- Sequential dates starting from ${isFlexibleDates ? "best travel date you determine" : "start date"}`;
 
   try {
     // Initialize OpenAI client at runtime (secrets are only available at runtime)
     const openai = getOpenAIClient();
     
     // Use Chat Completions API directly (much faster than Assistants API)
-    // GPT-4o has excellent knowledge and doesn't need web browsing for most travel planning
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert travel planner with extensive knowledge of destinations worldwide. Always respond with valid JSON only. Provide current, practical travel advice based on your knowledge.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      response_format: {type: "json_object"},
-      temperature: 0.7,
-    });
+    // GPT-4o-mini is faster (~3-5x) and more cost-effective (~10x cheaper) than GPT-4o
+    // while maintaining excellent quality for structured outputs like travel plans
+    // Add timeout to prevent hanging (4 minutes max for API call)
+    const completion = await Promise.race([
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert travel planner with extensive knowledge of destinations worldwide. Always respond with valid JSON only. Provide current, practical travel advice based on your knowledge.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        response_format: {type: "json_object"},
+        temperature: 0.7,
+      }),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("OpenAI API timeout after 4 minutes")), 240000)
+      ),
+    ]);
 
     const content = completion.choices[0].message.content;
     const planData = JSON.parse(content);

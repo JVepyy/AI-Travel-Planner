@@ -6,7 +6,6 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            // Show loading if: still loading auth, or authenticated but no user yet, or checking plans
             if authViewModel.isLoading || 
                (authViewModel.isAuthenticated && authViewModel.currentUser == nil) ||
                (authViewModel.isAuthenticated && authViewModel.currentUser != nil && hasCreatedFirstPlan == nil) {
@@ -14,7 +13,6 @@ struct ContentView: View {
             } else {
                 Group {
                     if authViewModel.isAuthenticated && authViewModel.currentUser != nil {
-                        // User is authenticated and loaded
                         if authViewModel.shouldShowOnboarding {
                             OnboardingView(showOnboarding: .constant(true))
                                 .environmentObject(authViewModel)
@@ -30,7 +28,6 @@ struct ContentView: View {
                             }
                         }
                     } else {
-                        // Not authenticated - show login
                         WelcomeView()
                             .environmentObject(authViewModel)
                     }
@@ -59,16 +56,14 @@ struct ContentView: View {
         .onChange(of: authViewModel.isAuthenticated) { isAuth in
             print("=== AUTHENTICATION CHANGED ===")
             print("isAuthenticated: \(isAuth)")
-            if !isAuth {
-                hasCreatedFirstPlan = nil
+                if !isAuth {
+                    hasCreatedFirstPlan = nil
+                }
             }
-            // Don't check plans here - wait for currentUser to be set
-        }
-        .onChange(of: authViewModel.isLoading) { isLoading in
-            print("=== LOADING CHANGED ===")
-            print("isLoading: \(isLoading)")
-            // Don't check plans here - wait for currentUser to be set
-        }
+            .onChange(of: authViewModel.isLoading) { isLoading in
+                print("=== LOADING CHANGED ===")
+                print("isLoading: \(isLoading)")
+            }
     }
     
     private func checkIfUserHasPlans() {
@@ -128,7 +123,7 @@ struct LoadingView: View {
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                     .scaleEffect(1.5)
                 
-                Text("Travel Planner")
+                Text("WanderPlan")
                     .font(.satoshi(size: 28, weight: .bold))
                     .foregroundColor(.white)
                 

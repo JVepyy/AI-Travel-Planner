@@ -12,7 +12,6 @@ struct HomeView: View {
     
     var body: some View {
         ZStack {
-            // Background gradient
             LinearGradient(
                 gradient: Gradient(colors: [
                     Color(red: 0.3, green: 0.5, blue: 1.0),
@@ -25,7 +24,6 @@ struct HomeView: View {
             .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Header
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Welcome back,")
@@ -39,7 +37,6 @@ struct HomeView: View {
                     
                     Spacer()
                     
-                    // Settings button
                     Button(action: { showSettings = true }) {
                         ZStack {
                             Circle()
@@ -58,7 +55,6 @@ struct HomeView: View {
                 
                 ScrollView {
                     VStack(spacing: 24) {
-                        // Create New Plan Card
                         Button(action: { showCreatePlan = true }) {
                             HStack(spacing: 16) {
                                 ZStack {
@@ -108,7 +104,6 @@ struct HomeView: View {
                         }
                         .padding(.horizontal, 24)
                         
-                        // Your Plans Section
                         VStack(alignment: .leading, spacing: 16) {
                             HStack {
                                 Image(systemName: "clock.arrow.circlepath")
@@ -132,7 +127,6 @@ struct HomeView: View {
                             .padding(.horizontal, 24)
                             
                             if isLoadingPlans {
-                                // Loading state
                                 VStack(spacing: 16) {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
@@ -145,7 +139,6 @@ struct HomeView: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 40)
                             } else if plans.isEmpty {
-                                // Empty state
                                 VStack(spacing: 16) {
                                     Image(systemName: "map")
                                         .font(.system(size: 50))
@@ -165,7 +158,6 @@ struct HomeView: View {
                                 .padding(.vertical, 40)
                                 .padding(.horizontal, 24)
                             } else {
-                                // Plans list
                                 VStack(spacing: 12) {
                                     ForEach(plans) { plan in
                                         PlanHistoryCard(plan: plan)
@@ -223,13 +215,11 @@ struct HomeView: View {
     }
 }
 
-// MARK: - Plan History Card
 struct PlanHistoryCard: View {
     let plan: TravelPlan
     
     var body: some View {
         HStack(spacing: 16) {
-            // Flag or placeholder
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white.opacity(0.15))
@@ -294,12 +284,9 @@ struct PlanHistoryCard: View {
     }
 }
 
-// MARK: - Settings Sheet
 struct SettingsSheet: View {
     @ObservedObject var viewModel: AuthViewModel
     @Environment(\.dismiss) var dismiss
-    @State private var editedName: String = ""
-    @State private var isEditingName = false
     @State private var showLogoutConfirm = false
     
     var body: some View {
@@ -318,9 +305,7 @@ struct SettingsSheet: View {
                 
                 ScrollView {
                     VStack(spacing: 24) {
-                        // Profile Section
                         VStack(spacing: 16) {
-                            // Avatar
                             ZStack {
                                 Circle()
                                     .fill(Color.white.opacity(0.2))
@@ -331,47 +316,9 @@ struct SettingsSheet: View {
                                     .foregroundColor(.white)
                             }
                             
-                            // Name
-                            if isEditingName {
-                                HStack(spacing: 12) {
-                                    TextField("", text: $editedName)
-                                        .font(.satoshi(size: 24, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .multilineTextAlignment(.center)
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 12)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .fill(Color.white.opacity(0.15))
-                                        )
-                                    
-                                    Button(action: {
-                                        // Save name
-                                        // TODO: Implement name update in AuthService
-                                        isEditingName = false
-                                    }) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 28))
-                                            .foregroundColor(.green)
-                                    }
-                                }
-                                .padding(.horizontal, 40)
-                            } else {
-                                HStack(spacing: 8) {
-                                    Text(viewModel.currentUser?.name ?? "Traveler")
-                                        .font(.satoshi(size: 24, weight: .bold))
-                                        .foregroundColor(.white)
-                                    
-                                    Button(action: {
-                                        editedName = viewModel.currentUser?.name ?? ""
-                                        isEditingName = true
-                                    }) {
-                                        Image(systemName: "pencil.circle.fill")
-                                            .font(.system(size: 22))
-                                            .foregroundColor(.white.opacity(0.6))
-                                    }
-                                }
-                            }
+                            Text(viewModel.currentUser?.name ?? "Traveler")
+                                .font(.satoshi(size: 24, weight: .bold))
+                                .foregroundColor(.white)
                             
                             Text(viewModel.currentUser?.email ?? "")
                                 .font(.satoshi(size: 14, weight: .regular))
@@ -379,30 +326,12 @@ struct SettingsSheet: View {
                         }
                         .padding(.top, 40)
                         
-                        // Settings Options
                         VStack(spacing: 12) {
-                            SettingsRow(
-                                icon: "bell.fill",
-                                title: "Notifications",
-                                subtitle: "Manage alerts"
-                            )
-                            
-                            SettingsRow(
-                                icon: "lock.fill",
-                                title: "Privacy",
-                                subtitle: "Data & security"
-                            )
-                            
-                            SettingsRow(
-                                icon: "questionmark.circle.fill",
-                                title: "Help & Support",
-                                subtitle: "Get assistance"
-                            )
-                            
                             SettingsRow(
                                 icon: "info.circle.fill",
                                 title: "About",
-                                subtitle: "Version 1.0.0"
+                                subtitle: "Version 1.0.0",
+                                showChevron: false
                             )
                         }
                         .padding(.horizontal, 24)
@@ -456,11 +385,11 @@ struct SettingsSheet: View {
     }
 }
 
-// MARK: - Settings Row
 struct SettingsRow: View {
     let icon: String
     let title: String
     let subtitle: String
+    let showChevron: Bool
     
     var body: some View {
         HStack(spacing: 16) {
@@ -486,9 +415,11 @@ struct SettingsRow: View {
             
             Spacer()
             
-            Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white.opacity(0.3))
+            if showChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.3))
+            }
         }
         .padding(14)
         .background(
