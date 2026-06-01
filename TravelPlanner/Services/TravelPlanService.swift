@@ -165,6 +165,7 @@ class TravelPlanService {
                 if let priceRange = restaurant.priceRange { restaurantData["priceRange"] = priceRange }
                 if let reservation = restaurant.reservation { restaurantData["reservation"] = reservation }
                 if let description = restaurant.description { restaurantData["description"] = description }
+                if let location = restaurant.location { restaurantData["location"] = location }
                 return restaurantData
             }
             
@@ -298,7 +299,8 @@ class TravelPlanService {
             priceRange: data["priceRange"] as? String,
             time: data["time"] as? String ?? "",
             reservation: data["reservation"] as? String,
-            description: data["description"] as? String
+            description: data["description"] as? String,
+            location: data["location"] as? String
         )
     }
     

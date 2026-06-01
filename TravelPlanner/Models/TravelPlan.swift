@@ -144,6 +144,7 @@ struct Restaurant: Codable, Identifiable {
     let time: String
     let reservation: String?
     let description: String?
+    let location: String?
     
     init(id: String = UUID().uuidString,
          name: String,
@@ -151,7 +152,8 @@ struct Restaurant: Codable, Identifiable {
          priceRange: String? = nil,
          time: String,
          reservation: String? = nil,
-         description: String? = nil) {
+         description: String? = nil,
+         location: String? = nil) {
         self.id = id
         self.name = name
         self.cuisine = cuisine
@@ -159,6 +161,7 @@ struct Restaurant: Codable, Identifiable {
         self.time = time
         self.reservation = reservation
         self.description = description
+        self.location = location
     }
 }
 

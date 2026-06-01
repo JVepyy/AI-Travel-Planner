@@ -172,10 +172,10 @@ async function checkRateLimit(userId) {
     const data = doc.data();
     const recentRequests = data.requests.filter((t) => t > oneHourAgo);
 
-    if (recentRequests.length >= 10) {
+    if (recentRequests.length >= 50) {
       throw new HttpsError(
           "resource-exhausted",
-          "Rate limit exceeded. Max 10 requests per hour.",
+          "Rate limit exceeded. Max 50 requests per hour.",
       );
     }
 
@@ -221,7 +221,7 @@ Respond with JSON only:
         {"time": "10:00 AM", "name": "Activity", "description": "Brief desc", "duration": "2h", "cost": "$25", "location": "Address"}
       ],
       "restaurants": [
-        {"name": "Restaurant", "cuisine": "Type", "time": "Lunch", "priceRange": "${budget}"}
+        {"name": "Restaurant", "cuisine": "Type", "time": "Lunch", "priceRange": "${budget}", "location": "Address"}
       ],
       "hiddenGems": ["Hidden gem"],
       "tip": "Daily tip",

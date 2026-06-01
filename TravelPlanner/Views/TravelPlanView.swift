@@ -6,6 +6,7 @@ struct TravelPlanView: View {
     @State private var animateHeader = false
     @State private var isItineraryRevealed = false
     @State private var buttonPulse = false
+    @State private var showMapItinerary = false
     
     var body: some View {
         NavigationView {
@@ -180,132 +181,85 @@ struct TravelPlanView: View {
                             .padding(.horizontal, 32)
                         }
                         
-                        // Unlock / Itinerary Section
-                        if isItineraryRevealed {
-                            // Day-by-day itinerary
-                            VStack(alignment: .leading, spacing: 24) {
-                                HStack {
-                                    Image(systemName: "calendar.badge.clock")
-                                        .font(.system(size: 24))
-                                    Text("Your Itinerary")
-                                        .font(.satoshi(size: 28, weight: .bold))
+                        // Reveal -> Map View Button
+                        VStack(spacing: 16) {
+                            Button(action: {
+                                isItineraryRevealed = true
+                                showMapItinerary = true
+                            }) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: isItineraryRevealed ? "map.fill" : "lock.open.fill")
+                                        .font(.system(size: 20, weight: .semibold))
+                                    Text(isItineraryRevealed ? "Open Map View" : "Reveal My Adventure")
+                                        .font(.satoshi(size: 18, weight: .bold))
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 18))
                                 }
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 32)
-                                
-                                ForEach(Array(plan.days.enumerated()), id: \.element.id) { index, day in
-                                    EnhancedDayCard(day: day, index: index)
-                                        .padding(.horizontal, 32)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 60)
+                                .background(
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 20)
+                                            .fill(
+                                                LinearGradient(
+                                                    gradient: Gradient(colors: [
+                                                        Color(red: 1.0, green: 0.6, blue: 0.2),
+                                                        Color(red: 1.0, green: 0.4, blue: 0.6)
+                                                    ]),
+                                                    startPoint: .leading,
+                                                    endPoint: .trailing
+                                                )
+                                            )
+                                            .blur(radius: buttonPulse ? 20 : 10)
+                                            .opacity(buttonPulse ? 0.9 : 0.4)
+                                            .scaleEffect(buttonPulse ? 1.1 : 1.0)
+                                        
+                                        RoundedRectangle(cornerRadius: 20)
+                                            .fill(
+                                                LinearGradient(
+                                                    gradient: Gradient(colors: [
+                                                        Color(red: 1.0, green: 0.5, blue: 0.2),
+                                                        Color(red: 0.9, green: 0.3, blue: 0.5)
+                                                    ]),
+                                                    startPoint: .leading,
+                                                    endPoint: .trailing
+                                                )
+                                            )
+                                        
+                                        RoundedRectangle(cornerRadius: 20)
+                                            .fill(
+                                                LinearGradient(
+                                                    gradient: Gradient(colors: [
+                                                        Color.white.opacity(0),
+                                                        Color.white.opacity(buttonPulse ? 0.3 : 0.1),
+                                                        Color.white.opacity(0)
+                                                    ]),
+                                                    startPoint: .leading,
+                                                    endPoint: .trailing
+                                                )
+                                            )
+                                    }
+                                )
+                                .scaleEffect(buttonPulse ? 1.03 : 1.0)
+                            }
+                            .padding(.horizontal, 32)
+                            .onAppear {
+                                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                                    buttonPulse = true
                                 }
                             }
-                            .padding(.top, 8)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .bottom).combined(with: .opacity),
-                                removal: .opacity
-                            ))
                             
-                            // Tips Section
-                            if !plan.localTips.isEmpty {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    EnhancedTipsSection(title: "Local Tips", icon: "lightbulb.fill", tips: plan.localTips)
-                                }
-                                .padding(.horizontal, 32)
-                                .padding(.top, 8)
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .bottom).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
+                            HStack(spacing: 6) {
+                                Image(systemName: "hand.tap.fill")
+                                    .font(.system(size: 14))
+                                Text(isItineraryRevealed ? "Tap to explore again on the map" : "Tap to unlock your interactive map")
+                                    .font(.satoshi(size: 14, weight: .medium))
                             }
-                            
-                            Spacer()
-                                .frame(height: 50)
-                        } else {
-                            // Unlock Button
-                            VStack(spacing: 16) {
-                                // Unlock button with enhanced pulsing
-                                Button(action: {
-                                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                                        isItineraryRevealed = true
-                                    }
-                                }) {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "lock.open.fill")
-                                            .font(.system(size: 20, weight: .semibold))
-                                        Text("Reveal My Adventure")
-                                            .font(.satoshi(size: 18, weight: .bold))
-                                        Image(systemName: "sparkles")
-                                            .font(.system(size: 18))
-                                    }
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 60)
-                                    .background(
-                                        ZStack {
-                                            // Outer glow
-                                            RoundedRectangle(cornerRadius: 20)
-                                                .fill(
-                                                    LinearGradient(
-                                                        gradient: Gradient(colors: [
-                                                            Color(red: 1.0, green: 0.6, blue: 0.2),
-                                                            Color(red: 1.0, green: 0.4, blue: 0.6)
-                                                        ]),
-                                                        startPoint: .leading,
-                                                        endPoint: .trailing
-                                                    )
-                                                )
-                                                .blur(radius: buttonPulse ? 20 : 10)
-                                                .opacity(buttonPulse ? 0.9 : 0.4)
-                                                .scaleEffect(buttonPulse ? 1.1 : 1.0)
-                                            
-                                            // Main button
-                                            RoundedRectangle(cornerRadius: 20)
-                                                .fill(
-                                                    LinearGradient(
-                                                        gradient: Gradient(colors: [
-                                                            Color(red: 1.0, green: 0.5, blue: 0.2),
-                                                            Color(red: 0.9, green: 0.3, blue: 0.5)
-                                                        ]),
-                                                        startPoint: .leading,
-                                                        endPoint: .trailing
-                                                    )
-                                                )
-                                            
-                                            // Shimmer overlay
-                                            RoundedRectangle(cornerRadius: 20)
-                                                .fill(
-                                                    LinearGradient(
-                                                        gradient: Gradient(colors: [
-                                                            Color.white.opacity(0),
-                                                            Color.white.opacity(buttonPulse ? 0.3 : 0.1),
-                                                            Color.white.opacity(0)
-                                                        ]),
-                                                        startPoint: .leading,
-                                                        endPoint: .trailing
-                                                    )
-                                                )
-                                        }
-                                    )
-                                    .scaleEffect(buttonPulse ? 1.03 : 1.0)
-                                }
-                                .padding(.horizontal, 32)
-                                .onAppear {
-                                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                                        buttonPulse = true
-                                    }
-                                }
-                                
-                                // Preview hint
-                                HStack(spacing: 6) {
-                                    Image(systemName: "hand.tap.fill")
-                                        .font(.system(size: 14))
-                                    Text("Tap to unlock your journey")
-                                        .font(.satoshi(size: 14, weight: .medium))
-                                }
-                                .foregroundColor(.white.opacity(0.5))
-                            }
-                            .padding(.top, 8)
-                            .padding(.bottom, 50)
+                            .foregroundColor(.white.opacity(0.5))
                         }
+                        .padding(.top, 8)
+                        .padding(.bottom, 50)
                     }
                 }
             }
@@ -325,6 +279,9 @@ struct TravelPlanView: View {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
                 animateHeader = true
             }
+        }
+        .fullScreenCover(isPresented: $showMapItinerary) {
+            MapItineraryView(plan: plan)
         }
     }
     
