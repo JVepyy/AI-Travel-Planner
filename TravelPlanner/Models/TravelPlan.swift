@@ -17,12 +17,12 @@ struct TravelPlan: Codable, Identifiable {
     let endDate: Date
     let budget: String
     let specialRequests: String?
-    let days: [DayItinerary]
+    var days: [DayItinerary]
     let totalEstimatedCost: String?
     let highlights: [String]
     let localTips: [String]
     let createdAt: Date
-    let updatedAt: Date
+    var updatedAt: Date
     
     // Computed property for flag emoji
     var flagEmoji: String? {
@@ -75,13 +75,36 @@ struct TravelPlan: Codable, Identifiable {
     }
 }
 
+// Shared helper: derive a sortable minute-of-day value from a free-form time
+// string (e.g. "9:00 AM", "Lunch"). Used to assign an initial `order` to
+// activities/restaurants that predate explicit ordering.
+enum TimeOrdering {
+    static func sortKey(for timeString: String) -> Int {
+        let lower = timeString.lowercased().trimmingCharacters(in: .whitespaces)
+        let isPM = lower.contains("pm")
+        let isAM = lower.contains("am")
+        let digits = lower.filter { $0.isNumber || $0 == ":" }
+        let parts = digits.split(separator: ":")
+        var hour = Int(parts.first ?? "0") ?? 0
+        let minute = Int(parts.dropFirst().first ?? "0") ?? 0
+        if isPM && hour < 12 { hour += 12 }
+        if isAM && hour == 12 { hour = 0 }
+        if !isAM && !isPM {
+            if lower.contains("lunch") { hour = 13 }
+            else if lower.contains("dinner") { hour = 19 }
+            else if lower.contains("breakfast") { hour = 8 }
+        }
+        return hour * 60 + minute
+    }
+}
+
 struct DayItinerary: Codable, Identifiable {
     let id: String
     let dayNumber: Int
     let date: Date
     let theme: String?
-    let activities: [Activity]
-    let restaurants: [Restaurant]
+    var activities: [Activity]
+    var restaurants: [Restaurant]
     let hiddenGems: [String]
     let tip: String?
     let estimatedDailyCost: String?
@@ -109,14 +132,16 @@ struct DayItinerary: Codable, Identifiable {
 
 struct Activity: Codable, Identifiable {
     let id: String
-    let time: String
-    let name: String
-    let description: String
-    let duration: String?
-    let cost: String?
-    let location: String?
-    let tips: String?
-    
+    var time: String
+    var name: String
+    var description: String
+    var duration: String?
+    var cost: String?
+    var location: String?
+    var tips: String?
+    var order: Int // Explicit position within the day's merged timeline
+    var swapOptions: [ActivityOption]? // AI swap pool, generated once per activity
+
     init(id: String = UUID().uuidString,
          time: String,
          name: String,
@@ -124,7 +149,9 @@ struct Activity: Codable, Identifiable {
          duration: String? = nil,
          cost: String? = nil,
          location: String? = nil,
-         tips: String? = nil) {
+         tips: String? = nil,
+         order: Int = 0,
+         swapOptions: [ActivityOption]? = nil) {
         self.id = id
         self.time = time
         self.name = name
@@ -133,19 +160,51 @@ struct Activity: Codable, Identifiable {
         self.cost = cost
         self.location = location
         self.tips = tips
+        self.order = order
+        self.swapOptions = swapOptions
+    }
+
+    /// Snapshot of this activity's descriptive fields as a swap option (for revert).
+    var asOption: ActivityOption {
+        ActivityOption(name: name, description: description, duration: duration, cost: cost, location: location)
+    }
+}
+
+/// One candidate the user can swap an activity to. Generated once, then reused.
+struct ActivityOption: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var description: String
+    var duration: String?
+    var cost: String?
+    var location: String?
+
+    init(id: String = UUID().uuidString,
+         name: String,
+         description: String,
+         duration: String? = nil,
+         cost: String? = nil,
+         location: String? = nil) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.duration = duration
+        self.cost = cost
+        self.location = location
     }
 }
 
 struct Restaurant: Codable, Identifiable {
     let id: String
-    let name: String
-    let cuisine: String?
-    let priceRange: String?
-    let time: String
-    let reservation: String?
-    let description: String?
-    let location: String?
-    
+    var name: String
+    var cuisine: String?
+    var priceRange: String?
+    var time: String
+    var reservation: String?
+    var description: String?
+    var location: String?
+    var order: Int // Explicit position within the day's merged timeline
+
     init(id: String = UUID().uuidString,
          name: String,
          cuisine: String? = nil,
@@ -153,7 +212,8 @@ struct Restaurant: Codable, Identifiable {
          time: String,
          reservation: String? = nil,
          description: String? = nil,
-         location: String? = nil) {
+         location: String? = nil,
+         order: Int = 0) {
         self.id = id
         self.name = name
         self.cuisine = cuisine
@@ -162,6 +222,7 @@ struct Restaurant: Codable, Identifiable {
         self.reservation = reservation
         self.description = description
         self.location = location
+        self.order = order
     }
 }
 

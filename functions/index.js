@@ -159,6 +159,135 @@ exports.generateTravelPlan = onCall(
   },
 );
 
+exports.swapActivity = onCall(
+    {
+      secrets: [openaiApiKey],
+      timeoutSeconds: 60,
+    },
+    async (request) => {
+  try {
+    const {auth, data} = request;
+
+    if (!auth) {
+      throw new HttpsError("unauthenticated", "User must be authenticated");
+    }
+
+    const {
+      destination,
+      budget,
+      dayTheme,
+      timeSlot,
+      currentActivityName,
+      currentActivityDescription,
+      avoidNames = [],
+    } = data;
+
+    if (!destination || !currentActivityName) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Missing required fields: destination, currentActivityName",
+      );
+    }
+
+    if (destination.length > 200 || currentActivityName.length > 200) {
+      throw new HttpsError("invalid-argument", "Input too long");
+    }
+
+    await checkRateLimit(auth.uid);
+
+    logger.info("=== SWAP ACTIVITY START ===");
+    logger.info(`User ID: ${auth.uid}, destination: ${destination}, activity: ${currentActivityName}`);
+
+    const alternatives = await generateSwapWithOpenAI({
+      destination,
+      budget: budget || "moderate",
+      dayTheme,
+      timeSlot,
+      currentActivityName,
+      currentActivityDescription,
+      avoidNames,
+    });
+
+    return {
+      success: true,
+      alternatives,
+    };
+  } catch (error) {
+    logger.error("Error swapping activity", error);
+
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+
+    throw new HttpsError("internal", "Failed to swap activity");
+  }
+  },
+);
+
+async function generateSwapWithOpenAI({destination, budget, dayTheme, timeSlot, currentActivityName, currentActivityDescription, avoidNames}) {
+  const avoidList = [currentActivityName, ...avoidNames].filter(Boolean).join(", ");
+
+  const prompt = `Suggest 3 alternative activities to replace "${currentActivityName}"${currentActivityDescription ? ` (${currentActivityDescription})` : ""} in ${destination}.
+Budget: ${budget}.${dayTheme ? ` Day theme: ${dayTheme}.` : ""}${timeSlot ? ` Time slot: ${timeSlot}.` : ""}
+The alternatives must be real places/experiences in ${destination}, fit the same time slot and budget, and be DIFFERENT from: ${avoidList}.
+
+Respond with JSON only:
+{
+  "alternatives": [
+    {"name": "Activity name", "description": "Brief desc under 15 words", "duration": "2h", "cost": "$25", "location": "Address or area"}
+  ]
+}
+
+Rules:
+- Exactly 3 alternatives
+- Keep descriptions under 15 words
+- Use the same currency/price style as the budget`;
+
+  try {
+    const openai = getOpenAIClient();
+
+    const completion = await Promise.race([
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert travel planner. Always respond with valid JSON only. Suggest real, current, practical activities.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        response_format: {type: "json_object"},
+        temperature: 0.8,
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("OpenAI API timeout after 45 seconds")), 45000),
+      ),
+    ]);
+
+    const content = completion.choices[0].message.content;
+    const parsed = JSON.parse(content);
+    const alternatives = (parsed.alternatives || []).slice(0, 3).map((a) => ({
+      name: a.name || "",
+      description: a.description || "",
+      duration: a.duration || null,
+      cost: a.cost || null,
+      location: a.location || null,
+    }));
+
+    if (alternatives.length === 0) {
+      throw new Error("No alternatives returned");
+    }
+
+    return alternatives;
+  } catch (error) {
+    logger.error("OpenAI swap error", error);
+    throw new Error(`Failed to generate alternatives: ${error.message}`);
+  }
+}
+
 async function checkRateLimit(userId) {
   const rateLimitRef = admin.firestore()
       .collection("rateLimits")

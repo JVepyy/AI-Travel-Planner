@@ -1,0 +1,1 @@
+Make sure no api keys are exposed, this app will go on appstore. everything must be secured to prevent hacker attack, api theft or any other way of ruining my project or finances.

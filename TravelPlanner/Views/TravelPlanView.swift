@@ -1,12 +1,23 @@
 import SwiftUI
 
 struct TravelPlanView: View {
-    let plan: TravelPlan
+    @StateObject private var editor: PlanEditorViewModel
+    private let onPlanChanged: ((TravelPlan) -> Void)?
     @Environment(\.dismiss) var dismiss
     @State private var animateHeader = false
     @State private var isItineraryRevealed = false
     @State private var buttonPulse = false
     @State private var showMapItinerary = false
+
+    private var plan: TravelPlan { editor.plan }
+
+    init(plan: TravelPlan, onPlanChanged: ((TravelPlan) -> Void)? = nil) {
+        self.onPlanChanged = onPlanChanged
+        _editor = StateObject(wrappedValue: PlanEditorViewModel(
+            plan: plan,
+            onChange: { updated in onPlanChanged?(updated) }
+        ))
+    }
     
     var body: some View {
         NavigationView {
@@ -281,7 +292,7 @@ struct TravelPlanView: View {
             }
         }
         .fullScreenCover(isPresented: $showMapItinerary) {
-            MapItineraryView(plan: plan)
+            MapItineraryView(editor: editor)
         }
     }
     

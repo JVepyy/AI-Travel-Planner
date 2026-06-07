@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import UIKit
 
 // MARK: - Unified Stop Model
 
@@ -23,8 +24,9 @@ private struct Stop: Identifiable, Hashable {
 
 private extension DayItinerary {
     var stops: [Stop] {
-        let activityStops = activities.enumerated().map { _, a in
-            Stop(
+        let activityStops = activities.map { a in
+            (sortOrder: a.order,
+             stop: Stop(
                 id: "act-\(a.id)",
                 kind: .activity,
                 title: a.name,
@@ -34,10 +36,11 @@ private extension DayItinerary {
                 cost: a.cost,
                 location: a.location,
                 order: 0
-            )
+             ))
         }
-        let restaurantStops = restaurants.enumerated().map { _, r in
-            Stop(
+        let restaurantStops = restaurants.map { r in
+            (sortOrder: r.order,
+             stop: Stop(
                 id: "res-\(r.id)",
                 kind: .restaurant,
                 title: r.name,
@@ -47,51 +50,38 @@ private extension DayItinerary {
                 cost: r.priceRange,
                 location: r.location,
                 order: 0
-            )
+             ))
         }
         let combined = activityStops + restaurantStops
+        // Sort by the stored explicit order; ties broken by time so freshly
+        // generated plans (all order 0) still appear chronologically.
         let sorted = combined.sorted { lhs, rhs in
-            sortKey(for: lhs.time) < sortKey(for: rhs.time)
+            if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
+            return TimeOrdering.sortKey(for: lhs.stop.time) < TimeOrdering.sortKey(for: rhs.stop.time)
         }
-        return sorted.enumerated().map { index, stop in
+        return sorted.enumerated().map { index, item in
             Stop(
-                id: stop.id,
-                kind: stop.kind,
-                title: stop.title,
-                subtitle: stop.subtitle,
-                time: stop.time,
-                description: stop.description,
-                cost: stop.cost,
-                location: stop.location,
+                id: item.stop.id,
+                kind: item.stop.kind,
+                title: item.stop.title,
+                subtitle: item.stop.subtitle,
+                time: item.stop.time,
+                description: item.stop.description,
+                cost: item.stop.cost,
+                location: item.stop.location,
                 order: index + 1
             )
         }
-    }
-
-    private func sortKey(for timeString: String) -> Int {
-        let lower = timeString.lowercased().trimmingCharacters(in: .whitespaces)
-        let isPM = lower.contains("pm")
-        let isAM = lower.contains("am")
-        let digits = lower.filter { $0.isNumber || $0 == ":" }
-        let parts = digits.split(separator: ":")
-        var hour = Int(parts.first ?? "0") ?? 0
-        let minute = Int(parts.dropFirst().first ?? "0") ?? 0
-        if isPM && hour < 12 { hour += 12 }
-        if isAM && hour == 12 { hour = 0 }
-        if !isAM && !isPM {
-            if lower.contains("lunch") { hour = 13 }
-            else if lower.contains("dinner") { hour = 19 }
-            else if lower.contains("breakfast") { hour = 8 }
-        }
-        return hour * 60 + minute
     }
 }
 
 // MARK: - Map Itinerary View
 
 struct MapItineraryView: View {
-    let plan: TravelPlan
+    @ObservedObject var editor: PlanEditorViewModel
     @Environment(\.dismiss) private var dismiss
+
+    private var plan: TravelPlan { editor.plan }
 
     @State private var selectedDayIndex: Int = 0
     @State private var selectedStopId: String?
@@ -145,12 +135,15 @@ struct MapItineraryView: View {
         }
         .sheet(isPresented: $showSheet) {
             ItinerarySheet(
-                plan: plan,
+                editor: editor,
                 selectedDayIndex: $selectedDayIndex,
                 selectedStopId: $selectedStopId,
                 coordinates: coordinates,
                 onStopTap: focusStop,
-                onOpenInMaps: openInMaps
+                onOpenInMaps: openInMaps,
+                onActivitySwapped: { stopId, query in
+                    Task { await regeocodeStop(stopId: stopId, query: query) }
+                }
             )
             .presentationDetents([.height(120), .medium, .large], selection: $sheetDetent)
             .presentationDragIndicator(.visible)
@@ -293,7 +286,7 @@ struct MapItineraryView: View {
         for day in plan.days {
             for stop in day.stops {
                 let query = stop.location ?? stop.title
-                if let coord = await geocoder.coordinate(for: query, near: destinationHint) {
+                if let coord = await geocoder.coordinate(for: query, near: destinationHint, regionCenter: dest) {
                     await MainActor.run {
                         coordinates[stop.id] = coord
                     }
@@ -304,6 +297,30 @@ struct MapItineraryView: View {
             }
         }
         await MainActor.run { zoomToCurrentDay() }
+    }
+
+    /// Re-geocodes a single stop after its location changed (e.g. an AI swap) and
+    /// moves the camera to the new spot.
+    private func regeocodeStop(stopId: String, query: String) async {
+        let geocoder = GeocodingService.shared
+        let destinationHint = plan.formattedName
+        geocoder.invalidate(query: query, near: destinationHint)
+        if let coord = await geocoder.coordinate(for: query, near: destinationHint, regionCenter: destinationCoordinate) {
+            await MainActor.run {
+                coordinates[stopId] = coord
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    cameraPosition = .region(
+                        MKCoordinateRegion(
+                            center: coord,
+                            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                        )
+                    )
+                }
+            }
+        } else {
+            // Couldn't locate the new place — drop the stale pin rather than mislead.
+            await MainActor.run { coordinates[stopId] = nil }
+        }
     }
 
     private func focusStop(_ stop: Stop) {
@@ -426,12 +443,26 @@ private struct Triangle: Shape {
 // MARK: - Bottom Sheet
 
 private struct ItinerarySheet: View {
-    let plan: TravelPlan
+    @ObservedObject var editor: PlanEditorViewModel
     @Binding var selectedDayIndex: Int
     @Binding var selectedStopId: String?
     let coordinates: [String: CLLocationCoordinate2D]
     let onStopTap: (Stop) -> Void
     let onOpenInMaps: (Stop) -> Void
+    let onActivitySwapped: (_ stopId: String, _ query: String) -> Void
+
+    @State private var pendingUndo: PlanEditorViewModel.DeletedStop?
+    @State private var undoDismissTask: Task<Void, Never>?
+    @State private var editMode: EditMode = .inactive
+    @State private var swapTarget: SwapTarget?
+
+    /// Identifies the activity being swapped (raw activity id + its day).
+    private struct SwapTarget: Identifiable {
+        let id: String       // raw activity id
+        let dayId: String
+    }
+
+    private var plan: TravelPlan { editor.plan }
 
     private var currentDay: DayItinerary? {
         guard !plan.days.isEmpty else { return nil }
@@ -444,32 +475,66 @@ private struct ItinerarySheet: View {
                 .padding(.top, 8)
 
             ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(spacing: 20) {
-                        if let day = currentDay {
-                            dayHeader(day)
-                            timelineSection(day, proxy: proxy)
-                            if !day.hiddenGems.isEmpty {
-                                hiddenGemsSection(day.hiddenGems)
+                List {
+                    if let day = currentDay {
+                        dayHeader(day)
+                            .plainRow()
+
+                        Section {
+                            ForEach(day.stops, id: \.id) { stop in
+                                StopCard(
+                                    stop: stop,
+                                    isSelected: selectedStopId == stop.id,
+                                    hasCoordinate: coordinates[stop.id] != nil,
+                                    onTap: { onStopTap(stop) },
+                                    onOpenInMaps: { onOpenInMaps(stop) },
+                                    onDelete: { deleteStop(stop) },
+                                    onSwap: stop.kind == .activity ? { beginSwap(stop, dayId: day.id) } : nil
+                                )
+                                .id(stop.id)
+                                .plainRow()
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        deleteStop(stop)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
                             }
-                            if let tip = day.tip {
-                                tipCard(tip)
+                            .onMove { indices, newOffset in
+                                moveStops(in: day, from: indices, to: newOffset)
                             }
+                        } header: {
+                            timelineHeader(day)
                         }
 
-                        if !plan.highlights.isEmpty {
-                            highlightsSection
+                        if !day.hiddenGems.isEmpty {
+                            hiddenGemsSection(day.hiddenGems)
+                                .plainRow()
                         }
-
-                        if !plan.localTips.isEmpty {
-                            localTipsSection
+                        if let tip = day.tip {
+                            tipCard(tip)
+                                .plainRow()
                         }
-
-                        Color.clear.frame(height: 24)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
+
+                    if !plan.highlights.isEmpty {
+                        highlightsSection
+                            .plainRow()
+                    }
+                    if !plan.localTips.isEmpty {
+                        localTipsSection
+                            .plainRow()
+                    }
+
+                    Color.clear
+                        .frame(height: 24)
+                        .plainRow()
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, 0)
+                .environment(\.editMode, $editMode)
                 .onChange(of: selectedStopId) { _, newId in
                     if let id = newId {
                         withAnimation(.easeInOut(duration: 0.3)) {
@@ -479,6 +544,92 @@ private struct ItinerarySheet: View {
                 }
             }
         }
+        .overlay(alignment: .bottom) {
+            if let undo = pendingUndo {
+                undoSnackbar(undo)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .sheet(item: $swapTarget) { target in
+            SwapSheet(
+                editor: editor,
+                dayId: target.dayId,
+                activityId: target.id,
+                onApplied: onActivitySwapped
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    // MARK: Edit / delete actions
+
+    private func beginSwap(_ stop: Stop, dayId: String) {
+        guard stop.id.hasPrefix("act-") else { return }
+        let rawId = String(stop.id.dropFirst(4))
+        swapTarget = SwapTarget(id: rawId, dayId: dayId)
+    }
+
+    /// Applies a drag-reorder to the merged stop list and persists the new order.
+    private func moveStops(in day: DayItinerary, from indices: IndexSet, to newOffset: Int) {
+        var ids = day.stops.map { $0.id }
+        ids.move(fromOffsets: indices, toOffset: newOffset)
+        editor.reorderStops(orderedStopIds: ids, dayId: day.id)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func deleteStop(_ stop: Stop) {
+        guard let dayId = currentDay?.id else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        let deleted = editor.deleteStop(stopId: stop.id, dayId: dayId)
+        if selectedStopId == stop.id { selectedStopId = nil }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            pendingUndo = deleted
+        }
+        scheduleUndoDismiss()
+    }
+
+    private func scheduleUndoDismiss() {
+        undoDismissTask?.cancel()
+        undoDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000) // 4s
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.25)) { pendingUndo = nil }
+            }
+        }
+    }
+
+    private func undoSnackbar(_ deleted: PlanEditorViewModel.DeletedStop) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "trash")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+            Text("Removed")
+                .font(.satoshi(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+            Spacer(minLength: 0)
+            Button {
+                undoDismissTask?.cancel()
+                editor.restore(deleted)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.easeInOut(duration: 0.25)) { pendingUndo = nil }
+            } label: {
+                Text("Undo")
+                    .font(.satoshi(size: 14, weight: .bold))
+                    .foregroundStyle(Color(red: 1.0, green: 0.8, blue: 0.4))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.black.opacity(0.85))
+        )
+        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
     }
 
     // MARK: Day selector
@@ -573,32 +724,31 @@ private struct ItinerarySheet: View {
 
     // MARK: Timeline
 
-    private func timelineSection(_ day: DayItinerary, proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Timeline")
-                    .font(.satoshi(size: 18, weight: .bold))
-                Spacer()
-                if !day.stops.isEmpty {
-                    Text("Tap a card to focus on the map")
-                        .font(.satoshi(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
+    private func timelineHeader(_ day: DayItinerary) -> some View {
+        HStack {
+            Text("Timeline")
+                .font(.satoshi(size: 18, weight: .bold))
+                .foregroundStyle(.primary)
+            Spacer()
+            if day.stops.count > 1 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        editMode = editMode.isEditing ? .inactive : .active
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: editMode.isEditing ? "checkmark" : "arrow.up.arrow.down")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(editMode.isEditing ? "Done" : "Reorder")
+                            .font(.satoshi(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(Color(red: 0.5, green: 0.3, blue: 0.9))
                 }
-            }
-
-            VStack(spacing: 10) {
-                ForEach(day.stops, id: \.id) { stop in
-                    StopCard(
-                        stop: stop,
-                        isSelected: selectedStopId == stop.id,
-                        hasCoordinate: coordinates[stop.id] != nil,
-                        onTap: { onStopTap(stop) },
-                        onOpenInMaps: { onOpenInMaps(stop) }
-                    )
-                    .id(stop.id)
-                }
+                .buttonStyle(.plain)
             }
         }
+        .textCase(nil)
+        .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 8, trailing: 20))
     }
 
     // MARK: Hidden gems
@@ -717,73 +867,11 @@ private struct StopCard: View {
     let hasCoordinate: Bool
     let onTap: () -> Void
     let onOpenInMaps: () -> Void
+    let onDelete: () -> Void
+    var onSwap: (() -> Void)? = nil
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    Circle().fill(gradient)
-                        .frame(width: 36, height: 36)
-                    Text("\(stop.order)")
-                        .font(.satoshi(size: 14, weight: .heavy))
-                        .foregroundStyle(.white)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(stop.time)
-                            .font(.satoshi(size: 12, weight: .bold))
-                            .foregroundStyle(.secondary)
-                        if let subtitle = stop.subtitle, !subtitle.isEmpty {
-                            Text("· \(subtitle)")
-                                .font(.satoshi(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                        Text(stop.kind == .activity ? "Activity" : "Eat")
-                            .font(.satoshi(size: 10, weight: .bold))
-                            .foregroundStyle(stop.kind == .activity ? Color.blue : Color.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill((stop.kind == .activity ? Color.blue : Color.orange).opacity(0.12)))
-                    }
-                    Text(stop.title)
-                        .font(.satoshi(size: 16, weight: .bold))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    if !stop.description.isEmpty {
-                        Text(stop.description)
-                            .font(.satoshi(size: 13, weight: .regular))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                            .multilineTextAlignment(.leading)
-                    }
-                    HStack(spacing: 10) {
-                        if let cost = stop.cost {
-                            Label(cost, systemImage: "creditcard.fill")
-                                .font(.satoshi(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                        }
-                        if let location = stop.location, !location.isEmpty {
-                            Label(location, systemImage: "mappin.and.ellipse")
-                                .font(.satoshi(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                        if hasCoordinate {
-                            Button(action: onOpenInMaps) {
-                                Image(systemName: "arrow.up.right.square.fill")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(.blue)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.top, 2)
-                }
-            }
+        cardContent
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
@@ -791,41 +879,119 @@ private struct StopCard: View {
                     .fill(Color.primary.opacity(isSelected ? 0.08 : 0.04))
             )
             .overlay(
-                Group {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 18)
-                            .stroke(selectionStroke, lineWidth: 1.5)
-                    } else {
-                        RoundedRectangle(cornerRadius: 18)
-                            .stroke(Color.primary.opacity(0.05), lineWidth: 1)
-                    }
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(isSelected ? accent.opacity(0.55) : Color.primary.opacity(0.05),
+                            lineWidth: isSelected ? 1.5 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 18))
+            .onTapGesture(perform: onTap)
+            .contextMenu {
+                Button(role: .destructive) { onDelete() } label: { Label("Delete", systemImage: "trash") }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isSelected)
+    }
+
+    private var cardContent: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // Soft numbered badge — calm tint instead of a bright gradient.
+            ZStack {
+                Circle().fill(accent.opacity(0.15))
+                    .frame(width: 30, height: 30)
+                Text("\(stop.order)")
+                    .font(.satoshi(size: 13, weight: .bold))
+                    .foregroundStyle(accent)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                // Meta line: type icon + time · detail (quiet, single colour).
+                HStack(spacing: 6) {
+                    Image(systemName: stop.kind == .activity ? "figure.walk" : "fork.knife")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(accent)
+                    Text(metaText)
+                        .font(.satoshi(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-            )
+
+                Text(stop.title)
+                    .font(.satoshi(size: 16, weight: .bold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                if !stop.description.isEmpty {
+                    Text(stop.description)
+                        .font(.satoshi(size: 13, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+
+                if stop.cost != nil || (stop.location.map { !$0.isEmpty } ?? false) {
+                    HStack(spacing: 6) {
+                        if let cost = stop.cost {
+                            Text(cost)
+                        }
+                        if stop.cost != nil, let location = stop.location, !location.isEmpty {
+                            Text("·").foregroundStyle(.tertiary)
+                        }
+                        if let location = stop.location, !location.isEmpty {
+                            Text(location).lineLimit(1)
+                        }
+                    }
+                    .font(.satoshi(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                }
+
+                if onSwap != nil || hasCoordinate {
+                    HStack(spacing: 10) {
+                        if let onSwap {
+                            Button(action: onSwap) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "sparkles")
+                                    Text("See alternatives")
+                                }
+                                .font(.satoshi(size: 12, weight: .semibold))
+                                .foregroundStyle(accent)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(accent.opacity(0.12)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Spacer(minLength: 0)
+                        if hasCoordinate {
+                            Button(action: onOpenInMaps) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "map")
+                                    Text("Directions")
+                                }
+                                .font(.satoshi(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 
-    private var gradient: LinearGradient {
+    /// "Lunch · Mexican" or "4:00 PM · 3h".
+    private var metaText: String {
+        if let subtitle = stop.subtitle, !subtitle.isEmpty {
+            return "\(stop.time) · \(subtitle)"
+        }
+        return stop.time
+    }
+
+    /// One calm accent per stop type — used as a low-opacity tint, not a fill.
+    private var accent: Color {
         switch stop.kind {
-        case .activity:
-            return LinearGradient(
-                colors: [Color(red: 0.3, green: 0.5, blue: 1.0), Color(red: 0.6, green: 0.3, blue: 0.9)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        case .restaurant:
-            return LinearGradient(
-                colors: [Color(red: 1.0, green: 0.5, blue: 0.2), Color(red: 0.9, green: 0.3, blue: 0.5)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
+        case .activity: return Color(red: 0.42, green: 0.45, blue: 0.92)
+        case .restaurant: return Color(red: 0.90, green: 0.55, blue: 0.35)
         }
-    }
-
-    private var selectionStroke: LinearGradient {
-        LinearGradient(
-            colors: [Color(red: 0.3, green: 0.5, blue: 1.0), Color(red: 0.9, green: 0.4, blue: 0.6)],
-            startPoint: .leading, endPoint: .trailing
-        )
     }
 }
 
@@ -871,3 +1037,222 @@ private struct FlowLayout: Layout {
         }
     }
 }
+
+// MARK: - List row styling
+
+private extension View {
+    /// Strips the default List chrome so custom cards keep their look inside a List.
+    func plainRow() -> some View {
+        self
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
+    }
+}
+
+// MARK: - Swap Sheet
+
+private struct SwapSheet: View {
+    @ObservedObject var editor: PlanEditorViewModel
+    let dayId: String
+    let activityId: String
+    /// Notifies the map to re-geocode after a swap: (stopId, locationQuery).
+    let onApplied: (_ stopId: String, _ query: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    private var activity: Activity? {
+        editor.plan.days.first(where: { $0.id == dayId })?
+            .activities.first(where: { $0.id == activityId })
+    }
+
+    /// The cached pool of choices (original + alternatives), generated once.
+    private var options: [ActivityOption] { activity?.swapOptions ?? [] }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    loadingView
+                } else if let errorMessage {
+                    errorView(errorMessage)
+                } else {
+                    optionsList
+                }
+            }
+            .navigationTitle("Swap activity")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .task { await loadIfNeeded() }
+    }
+
+    private var loadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.3)
+            Text("Finding alternatives…")
+                .font(.satoshi(size: 15, weight: .medium))
+                .foregroundStyle(.secondary)
+            if let name = activity?.name {
+                Text("For “\(name)”")
+                    .font(.satoshi(size: 13, weight: .regular))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func errorView(_ message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.satoshi(size: 15, weight: .medium))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            Button {
+                Task { await generate() }
+            } label: {
+                Text("Try again")
+                    .font(.satoshi(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(Capsule().fill(Color(red: 0.5, green: 0.3, blue: 0.9)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var optionsList: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                Text("Pick a version of this stop. Generated once — switch freely.")
+                    .font(.satoshi(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(options) { option in
+                    Button { choose(option) } label: {
+                        optionCard(option, isCurrent: isCurrent(option))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(20)
+        }
+    }
+
+    private func optionCard(_ option: ActivityOption, isCurrent: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(option.name)
+                    .font(.satoshi(size: 16, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                if isCurrent {
+                    Text("Current")
+                        .font(.satoshi(size: 10, weight: .bold))
+                        .foregroundStyle(Color(red: 0.5, green: 0.3, blue: 0.9))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color(red: 0.5, green: 0.3, blue: 0.9).opacity(0.12)))
+                }
+            }
+            if !option.description.isEmpty {
+                Text(option.description)
+                    .font(.satoshi(size: 13, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+            HStack(spacing: 12) {
+                if let duration = option.duration {
+                    Label(duration, systemImage: "clock")
+                }
+                if let cost = option.cost {
+                    Label(cost, systemImage: "creditcard.fill")
+                }
+                if let location = option.location, !location.isEmpty {
+                    Label(location, systemImage: "mappin.and.ellipse")
+                        .lineLimit(1)
+                }
+            }
+            .font(.satoshi(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.top, 2)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16).fill(Color.primary.opacity(isCurrent ? 0.08 : 0.05)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(isCurrent ? Color(red: 0.5, green: 0.3, blue: 0.9).opacity(0.5) : Color.primary.opacity(0.08),
+                        lineWidth: isCurrent ? 1.5 : 1)
+        )
+    }
+
+    private func isCurrent(_ option: ActivityOption) -> Bool {
+        option.name == activity?.name && option.description == activity?.description
+    }
+
+    /// Uses the cached pool when present; only calls the backend the first time.
+    private func loadIfNeeded() async {
+        if options.isEmpty {
+            await generate()
+        }
+    }
+
+    private func generate() async {
+        guard let day = editor.plan.days.first(where: { $0.id == dayId }),
+              var activity = day.activities.first(where: { $0.id == activityId }) else {
+            dismiss()
+            return
+        }
+        isLoading = true
+        errorMessage = nil
+        do {
+            let alternatives = try await TravelPlanService.shared.swapActivity(
+                plan: editor.plan, day: day, activity: activity
+            )
+            // Pool = the original (so the user can revert) + the AI alternatives.
+            var pool = [activity.asOption]
+            pool.append(contentsOf: alternatives.map {
+                ActivityOption(name: $0.name, description: $0.description,
+                               duration: $0.duration, cost: $0.cost, location: $0.location)
+            })
+            activity.swapOptions = pool
+            editor.updateActivity(activity, dayId: dayId)
+        } catch {
+            errorMessage = "Couldn't load suggestions. Please try again."
+        }
+        isLoading = false
+    }
+
+    private func choose(_ option: ActivityOption) {
+        guard let day = editor.plan.days.first(where: { $0.id == dayId }),
+              var activity = day.activities.first(where: { $0.id == activityId }),
+              !isCurrent(option) else { return }
+        // Keep id, time, order, tips, and the cached pool; swap descriptive fields.
+        activity.name = option.name
+        activity.description = option.description
+        activity.duration = option.duration
+        activity.cost = option.cost
+        activity.location = option.location
+        editor.updateActivity(activity, dayId: dayId)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        onApplied("act-\(activityId)", option.location ?? option.name)
+        dismiss()
+    }
+}
+

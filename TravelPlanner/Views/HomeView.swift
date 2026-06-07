@@ -191,7 +191,11 @@ struct HomeView: View {
             .environmentObject(viewModel)
         }
         .fullScreenCover(item: $selectedPlan) { plan in
-            TravelPlanView(plan: plan)
+            TravelPlanView(plan: plan, onPlanChanged: { updated in
+                if let i = plans.firstIndex(where: { $0.id == updated.id }) {
+                    plans[i] = updated
+                }
+            })
         }
         .onAppear {
             loadPlans()

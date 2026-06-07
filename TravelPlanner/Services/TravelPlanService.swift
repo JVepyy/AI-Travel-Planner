@@ -95,6 +95,53 @@ class TravelPlanService {
         }
     }
     
+    /// AI-generated alternative for an activity the user wants to swap out.
+    struct ActivityAlternative: Identifiable {
+        let id = UUID().uuidString
+        let name: String
+        let description: String
+        let duration: String?
+        let cost: String?
+        let location: String?
+    }
+
+    /// Asks the backend for alternative activities to replace `activity` in `day`.
+    func swapActivity(plan: TravelPlan, day: DayItinerary, activity: Activity) async throws -> [ActivityAlternative] {
+        let swapFunction = functions.httpsCallable("swapActivity")
+
+        let avoidNames = day.activities
+            .filter { $0.id != activity.id }
+            .map { $0.name }
+
+        let requestData: [String: Any] = [
+            "destination": plan.formattedName,
+            "budget": plan.budget,
+            "dayTheme": day.theme ?? "",
+            "timeSlot": activity.time,
+            "currentActivityName": activity.name,
+            "currentActivityDescription": activity.description,
+            "avoidNames": avoidNames,
+        ]
+
+        let result = try await swapFunction.call(requestData)
+
+        guard let responseData = result.data as? [String: Any],
+              let rawAlternatives = responseData["alternatives"] as? [[String: Any]] else {
+            throw NSError(domain: "TravelPlanService", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "Invalid response from server"])
+        }
+
+        return rawAlternatives.map { item in
+            ActivityAlternative(
+                name: item["name"] as? String ?? "",
+                description: item["description"] as? String ?? "",
+                duration: item["duration"] as? String,
+                cost: item["cost"] as? String,
+                location: item["location"] as? String
+            )
+        }
+    }
+
     func savePlan(_ plan: TravelPlan) async throws {
         var data: [String: Any] = [
             "id": plan.id,
@@ -152,6 +199,20 @@ class TravelPlanService {
                 if let cost = activity.cost { activityData["cost"] = cost }
                 if let location = activity.location { activityData["location"] = location }
                 if let tips = activity.tips { activityData["tips"] = tips }
+                activityData["order"] = activity.order
+                if let options = activity.swapOptions {
+                    activityData["swapOptions"] = options.map { option -> [String: Any] in
+                        var optionData: [String: Any] = [
+                            "id": option.id,
+                            "name": option.name,
+                            "description": option.description
+                        ]
+                        if let duration = option.duration { optionData["duration"] = duration }
+                        if let cost = option.cost { optionData["cost"] = cost }
+                        if let location = option.location { optionData["location"] = location }
+                        return optionData
+                    }
+                }
                 return activityData
             }
             
@@ -166,6 +227,7 @@ class TravelPlanService {
                 if let reservation = restaurant.reservation { restaurantData["reservation"] = reservation }
                 if let description = restaurant.description { restaurantData["description"] = description }
                 if let location = restaurant.location { restaurantData["location"] = location }
+                restaurantData["order"] = restaurant.order
                 return restaurantData
             }
             
@@ -257,14 +319,33 @@ class TravelPlanService {
         let estimatedDailyCost = data["estimatedDailyCost"] as? String
         
         let activitiesData = data["activities"] as? [[String: Any]] ?? []
-        let activities = activitiesData.map { parseActivity(from: $0) }
-        
+        var activities = activitiesData.map { parseActivity(from: $0) }
+
         let restaurantsData = data["restaurants"] as? [[String: Any]] ?? []
-        let restaurants = restaurantsData.map { parseRestaurant(from: $0) }
-        
+        var restaurants = restaurantsData.map { parseRestaurant(from: $0) }
+
+        // Migration: legacy plans (and freshly AI-generated ones) have no stored
+        // `order`. When any item is missing it, derive an initial order across the
+        // merged activity+restaurant set from each item's time string so the
+        // timeline stays chronological until the user reorders.
+        let missingOrder = activitiesData.contains { $0["order"] == nil }
+            || restaurantsData.contains { $0["order"] == nil }
+        if missingOrder {
+            let ordered = (activities.map { (id: $0.id, isActivity: true, time: $0.time) }
+                + restaurants.map { (id: $0.id, isActivity: false, time: $0.time) })
+                .sorted { TimeOrdering.sortKey(for: $0.time) < TimeOrdering.sortKey(for: $1.time) }
+            for (index, item) in ordered.enumerated() {
+                if item.isActivity {
+                    if let i = activities.firstIndex(where: { $0.id == item.id }) { activities[i].order = index }
+                } else {
+                    if let i = restaurants.firstIndex(where: { $0.id == item.id }) { restaurants[i].order = index }
+                }
+            }
+        }
+
         let hiddenGems = data["hiddenGems"] as? [String] ?? []
         let tip = data["tip"] as? String
-        
+
         return DayItinerary(
             id: id,
             dayNumber: dayNumber,
@@ -279,7 +360,19 @@ class TravelPlanService {
     }
     
     private func parseActivity(from data: [String: Any]) -> Activity {
-        Activity(
+        let optionsData = data["swapOptions"] as? [[String: Any]]
+        let swapOptions = optionsData?.map { item in
+            ActivityOption(
+                id: item["id"] as? String ?? UUID().uuidString,
+                name: item["name"] as? String ?? "",
+                description: item["description"] as? String ?? "",
+                duration: item["duration"] as? String,
+                cost: item["cost"] as? String,
+                location: item["location"] as? String
+            )
+        }
+
+        return Activity(
             id: data["id"] as? String ?? UUID().uuidString,
             time: data["time"] as? String ?? "",
             name: data["name"] as? String ?? "",
@@ -287,10 +380,12 @@ class TravelPlanService {
             duration: data["duration"] as? String,
             cost: data["cost"] as? String,
             location: data["location"] as? String,
-            tips: data["tips"] as? String
+            tips: data["tips"] as? String,
+            order: data["order"] as? Int ?? 0,
+            swapOptions: swapOptions
         )
     }
-    
+
     private func parseRestaurant(from data: [String: Any]) -> Restaurant {
         Restaurant(
             id: data["id"] as? String ?? UUID().uuidString,
@@ -300,7 +395,8 @@ class TravelPlanService {
             time: data["time"] as? String ?? "",
             reservation: data["reservation"] as? String,
             description: data["description"] as? String,
-            location: data["location"] as? String
+            location: data["location"] as? String,
+            order: data["order"] as? Int ?? 0
         )
     }
     
